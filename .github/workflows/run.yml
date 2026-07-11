@@ -1,0 +1,25 @@
+name: stock-alert
+
+on:
+  schedule:
+    # Hourly, 13:05-21:05 UTC Mon-Fri — covers 9am-4pm ET in both EST and EDT.
+    # main.py re-checks Eastern market hours and exits quietly outside them.
+    - cron: "5 13-21 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python main.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
