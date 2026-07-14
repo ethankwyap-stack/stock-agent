@@ -44,7 +44,10 @@ def scan(valid_tickers, limit=None):
             texts = []
             board = tk.info.get("messageBoardId")
             if board:
-                texts += _comments(board)
+                try:
+                    texts += _comments(board)
+                except Exception:
+                    pass  # OpenWeb 403s since Jul 2026; news headlines below still score
             n_comments = len(texts)
             for item in tk.news or []:
                 content = item.get("content", item)
