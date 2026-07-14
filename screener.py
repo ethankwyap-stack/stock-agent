@@ -63,7 +63,9 @@ def scan(tickers=None):
             sig["rsi_overbought"] = True
         if sig:
             sig.update(ticker=t, price=round(float(close.iloc[-1]), 2),
-                       rsi=round(r, 1), volume_ratio=round(vol_ratio, 1))
+                       rsi=round(r, 1), volume_ratio=round(vol_ratio, 1),
+                       volatility_30d_annualized_pct=round(
+                           float(close.pct_change().tail(30).std()) * 252 ** 0.5 * 100, 1))
             signals.append(sig)
     return signals
 

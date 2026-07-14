@@ -1,16 +1,32 @@
-"""Combine signals into a scored ranking; send top 5 to Claude for a trade-ideas summary."""
+"""Combine signals into a scored ranking; Claude judges which candidates are truly actionable."""
 import json
+import re
 import anthropic
 
 SYSTEM = (
-    "You are a concise stock-signal analyst. You receive JSON describing tickers "
-    "that triggered technical screens (volume, breakout, RSI), Yahoo Finance "
-    "community-comment and news-headline sentiment, "
-    "and upcoming earnings. Write a short Telegram-ready trade-ideas summary: "
-    "one line per ticker with the setup, the key signals, and a one-clause risk "
-    "note. Plain text, no markdown tables, no financial-advice disclaimers, "
-    "under 1500 characters. Rank strongest idea first."
+    "You are a skeptical stock analyst whose default verdict is DO NOT BUY. You "
+    "receive JSON for tickers that passed technical screens (volume, breakout, RSI), "
+    "each with a facts pack (analyst target upside %, position in 52-week range, "
+    "trailing P/E, beta, 30d volatility), Yahoo sentiment, and upcoming earnings. "
+    "For EACH candidate, first build the strongest bear case from the actual "
+    "numbers: overextension near 52-week highs, rich valuation, earnings gap risk "
+    "vs its historical move, volatility that dwarfs the upside, sentiment froth "
+    "chasing a move already made. Then include the ticker ONLY if its concrete "
+    "upside clearly outweighs that bear case — reject on any doubt; an empty picks "
+    "list is a good outcome. Respond with ONLY this JSON, no other text: "
+    '{"picks": [{"ticker": "XYZ", "line": "XYZ $price — setup and upside\\n'
+    'Risks: the 1-2 strongest reasons NOT to buy\\nVerdict: why it is worth it '
+    'anyway"}]}. Each line value is 2-3 short plain-text lines joined by \\n, '
+    "under 400 chars, citing the actual numbers, strongest pick first, no "
+    "financial-advice disclaimers."
 )
+
+
+def signal_types(s):
+    """How many independent signal families fired (volume, breakout, RSI, earnings)."""
+    return (bool(s.get("unusual_volume")) + bool(s.get("breakout_20d"))
+            + bool(s.get("rsi_oversold") or s.get("rsi_overbought"))
+            + ("earnings" in s))
 
 
 def rank(signals, sentiment, earnings):
@@ -32,15 +48,20 @@ def rank(signals, sentiment, earnings):
     return sorted(signals, key=lambda s: s["score"], reverse=True)
 
 
-def analyze(top_signals):
+def judge(candidates):
+    """Ask Claude which candidates merit an alert. Returns picks (possibly empty)."""
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
     resp = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=1000,
+        max_tokens=1500,
         system=SYSTEM,
-        messages=[{"role": "user", "content": json.dumps(top_signals)}],
+        messages=[{"role": "user", "content": json.dumps(candidates)}],
     )
-    return next(b.text for b in resp.content if b.type == "text")
+    text = next(b.text for b in resp.content if b.type == "text")
+    text = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.M).strip()
+    picks = json.loads(text)["picks"]
+    valid = {c["ticker"] for c in candidates}
+    return [p for p in picks if p.get("ticker") in valid and p.get("line")]
 
 
 if __name__ == "__main__":
@@ -51,4 +72,6 @@ if __name__ == "__main__":
                   {"BBB": {"earnings_date": "2026-07-14", "avg_post_earnings_move_pct": 5.0}})
     assert ranked[0]["ticker"] == "BBB" and ranked[0]["score"] == 8.5
     assert ranked[1]["score"] == 1.0
+    # confluence: BBB fired volume+breakout+earnings = 3 families, AAA only RSI = 1
+    assert signal_types(ranked[0]) == 3 and signal_types(ranked[1]) == 1
     print("rank self-check ok")
