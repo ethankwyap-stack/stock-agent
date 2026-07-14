@@ -5,7 +5,12 @@ on:
     # Hourly, 13:05-21:05 UTC Mon-Fri — covers 9am-4pm ET in both EST and EDT.
     # main.py re-checks Eastern market hours and exits quietly outside them.
     - cron: "5 13-21 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Just send a Telegram test message (no scan)"
+        type: boolean
+        default: false
 
 jobs:
   run:
@@ -25,7 +30,13 @@ jobs:
           path: state.json
           key: state-${{ github.run_id }}
           restore-keys: state-
-      - run: python main.py
+      - if: ${{ inputs.test }}
+        run: python -c "import notify; notify.send('Test ping — stock-agent can reach your Telegram.')"
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - if: ${{ !inputs.test }}
+        run: python main.py
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
