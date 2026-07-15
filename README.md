@@ -31,9 +31,11 @@ Gates a ticker must clear, in order:
    outweighs it. Zero picks is a normal outcome.
 
 Alerts are 2-3 lines per pick: the setup and upside, the top reasons NOT to
-buy, and the verdict on why it's worth it anyway. If a whole week goes by with
-no alerts, you get one "still scanning" heartbeat Friday afternoon (alert
-memory lives in `state.json`, carried between runs by the Actions cache).
+buy, and the verdict on why it's worth it anyway. You get at least one message
+every day: if no alert fired by 3pm ET, a daily digest lists the day's top
+signals (or says it was a quiet day), and on weekends a single "market closed"
+note goes out around noon ET (alert memory lives in `state.json`, carried
+between runs by the Actions cache).
 
 ## Setup
 

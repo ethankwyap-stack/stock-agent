@@ -3,7 +3,7 @@ import json
 import logging
 import pathlib
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -29,17 +29,27 @@ def market_open(now):
 
 def main():
     now = datetime.now(ZoneInfo("America/New_York"))
-    if not market_open(now) and "--force" not in sys.argv:
-        log.info("Market closed, skipping (use --force to override).")
-        return
-
     import screener, sentiment, earnings, facts, analyzer, notify
 
     state = load_state()
     today = now.date().isoformat()
+
+    if not market_open(now) and "--force" not in sys.argv:
+        # weekend cron fires once a day so "at least one message a day" still holds;
+        # hour check keeps a pre-open weekday run (8am EST) from firing it early
+        if state["last_alert"] != today and (now.weekday() >= 5 or now.hour >= 16):
+            notify.send("Market closed today — no scan. Back at it next trading day.")
+            state["last_alert"] = today
+            STATE.write_text(json.dumps(state))
+            log.info("Sent market-closed daily note.")
+        else:
+            log.info("Market closed, skipping (use --force to override).")
+        return
+
     # ponytail: only today's sends matter for the resend rule — drop older entries
     state["sent"] = {t: v for t, v in state["sent"].items() if v["date"] == today}
 
+    ranked = []
     signals = screener.scan()
     log.info("screener: %d tickers with signals", len(signals))
 
@@ -95,12 +105,22 @@ def main():
                 log.info("Claude judged none of %d candidates actionable — staying quiet.",
                          len(candidates))
 
-    # weekly heartbeat: Friday's last run (3pm ET hour), quiet all week -> proof of life
-    quiet_days = 99 if not state["last_alert"] else \
-        (now.date() - date.fromisoformat(state["last_alert"])).days
-    if now.weekday() == 4 and now.hour == 15 and quiet_days >= 5:
-        notify.send("Still scanning — nothing actionable this week.")
-        log.info("Sent weekly heartbeat.")
+    # daily digest: last scan hour (3pm ET), nothing sent today -> report the day anyway
+    if now.hour == 15 and state["last_alert"] != today:
+        if ranked:
+            def _names(s):
+                return ", ".join(n for n, on in [
+                    ("volume", s.get("unusual_volume")), ("breakout", s.get("breakout_20d")),
+                    ("RSI", s.get("rsi_oversold") or s.get("rsi_overbought")),
+                    ("earnings", "earnings" in s)] if on)
+            body = "\n".join(f"{s['ticker']} — score {s['score']} ({_names(s)})"
+                             for s in ranked[:3])
+            notify.send("Daily digest — nothing crossed the alert bar today. "
+                        "Top signals seen:\n" + body)
+        else:
+            notify.send("Daily digest — quiet day, no tickers tripped any screens.")
+        state["last_alert"] = today
+        log.info("Sent daily digest.")
 
     STATE.write_text(json.dumps(state))
 
