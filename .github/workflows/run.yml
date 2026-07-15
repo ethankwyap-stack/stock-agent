@@ -2,9 +2,9 @@ name: stock-alert
 
 on:
   schedule:
-    # Hourly, 13:05-21:05 UTC Mon-Fri — covers 9am-4pm ET in both EST and EDT.
+    # Every 30 min, 13:05-21:35 UTC Mon-Fri — covers 9am-4pm ET in both EST and EDT.
     # main.py re-checks Eastern market hours and exits quietly outside them.
-    - cron: "5 13-21 * * 1-5"
+    - cron: "5,35 13-21 * * 1-5"
   workflow_dispatch:
     inputs:
       test:
