@@ -17,6 +17,8 @@ def fetch(tickers):
             continue
         price = info.get("currentPrice") or info.get("regularMarketPrice")
         f = {}
+        if price:
+            f["price"] = round(price, 2)
         target = info.get("targetMeanPrice")
         if price and target:
             f["analyst_mean_target"] = target

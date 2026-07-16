@@ -29,7 +29,7 @@ def market_open(now):
 
 def main():
     now = datetime.now(ZoneInfo("America/New_York"))
-    import screener, sentiment, earnings, facts, analyzer, notify
+    import screener, sentiment, earnings, facts, analyzer, notify, tracker
 
     state = load_state()
     today = now.date().isoformat()
@@ -95,6 +95,7 @@ def main():
             picks = analyzer.judge(candidates)
             if picks:
                 notify.send("\n\n".join(p["line"] for p in picks))
+                tracker.log_picks(picks, candidates)
                 scores = {s["ticker"]: s["score"] for s in candidates}
                 for p in picks:
                     state["sent"][p["ticker"]] = {"date": today, "score": scores[p["ticker"]]}
