@@ -33,6 +33,8 @@ jobs:
           path: state.json
           key: state-${{ github.run_id }}
           restore-keys: state-
+      # temp: dump alert memory so pre-tracker picks can be backfilled
+      - run: cat state.json || echo "no state"
       - if: ${{ inputs.test }}
         run: python -c "import notify; notify.send('Test ping — stock-agent can reach your Telegram.')"
         env:
