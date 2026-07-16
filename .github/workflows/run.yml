@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       test:
-        description: "Just send a Telegram test message (no scan)"
+        description: "Send a fake test pick through Telegram + sheet (no scan)"
         type: boolean
         default: false
 
@@ -34,10 +34,19 @@ jobs:
           key: state-${{ github.run_id }}
           restore-keys: state-
       - if: ${{ inputs.test }}
-        run: python -c "import notify; notify.send('Test ping — stock-agent can reach your Telegram.')"
+        # full pipeline test: real Telegram send + real sheet row, fake pick
+        run: |
+          python -c "
+          import facts, notify, tracker
+          picks = [{'ticker': 'AAPL', 'line': 'TEST PICK — pipeline test, delete this row from the sheet'}]
+          cands = [{'ticker': 'AAPL', 'score': 0, 'facts': facts.fetch(['AAPL']).get('AAPL', {})}]
+          notify.send(picks[0]['line'])
+          tracker.log_picks(picks, cands)
+          "
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}
       - if: ${{ !inputs.test }}
         run: python main.py
         env:
