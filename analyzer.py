@@ -48,6 +48,22 @@ def rank(signals, sentiment, earnings):
     return sorted(signals, key=lambda s: s["score"], reverse=True)
 
 
+def parse_picks(text, valid):
+    """Pull the picks out of Claude's reply. Never raises — bad reply means no picks.
+
+    Claude sometimes wraps the JSON in prose or code fences, or just says in plain
+    English that nothing qualifies; a quiet run beats a crashed one either way.
+    """
+    blob = re.search(r"\{.*\}", text, re.S)
+    try:
+        picks = json.loads(blob.group())["picks"] if blob else []
+    except (json.JSONDecodeError, KeyError, TypeError):
+        print("judge: unparseable response, treating as no picks:", repr(text[:500]))
+        return []
+    return [p for p in picks if isinstance(p, dict)
+            and p.get("ticker") in valid and p.get("line")]
+
+
 def judge(candidates):
     """Ask Claude which candidates merit an alert. Returns picks (possibly empty)."""
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
@@ -57,11 +73,8 @@ def judge(candidates):
         system=SYSTEM,
         messages=[{"role": "user", "content": json.dumps(candidates)}],
     )
-    text = next(b.text for b in resp.content if b.type == "text")
-    text = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.M).strip()
-    picks = json.loads(text)["picks"]
-    valid = {c["ticker"] for c in candidates}
-    return [p for p in picks if p.get("ticker") in valid and p.get("line")]
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    return parse_picks(text, {c["ticker"] for c in candidates})
 
 
 if __name__ == "__main__":
@@ -75,3 +88,17 @@ if __name__ == "__main__":
     # confluence: BBB fired volume+breakout+earnings = 3 families, AAA only RSI = 1
     assert signal_types(ranked[0]) == 3 and signal_types(ranked[1]) == 1
     print("rank self-check ok")
+
+    # self-check: the response shapes that crashed live runs must all parse or degrade to []
+    def _parse(text):
+        return parse_picks(text, {"BBB"})
+
+    good = '{"picks": [{"ticker": "BBB", "line": "BBB $10 — up"}]}'
+    assert len(_parse(good)) == 1
+    assert len(_parse("Here are my picks:\n```json\n" + good + "\n```")) == 1  # prose + fences
+    assert _parse("None of these candidates are actionable today.") == []     # plain English
+    assert _parse('{"picks": [{"ticker": "ZZZ", "line": "x"}]}') == []        # hallucinated ticker
+    assert _parse('{"picks": [{"ticker": "BBB"}]}') == []                     # missing line
+    assert _parse('{"picks": [{"ticker": "BBB", "line": "x"') == []           # truncated
+    assert _parse('{"verdict": "no"}') == []                                  # wrong schema
+    print("judge-parse self-check ok")
