@@ -32,11 +32,24 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
 ```
 Local `.venv` is Python 3.9; Actions runs 3.12.
 
+Or test on GitHub with the stored key — Actions → stock-alert → Run workflow:
+- **smoke** — one real Claude judge call. Use this after any model change; a
+  forced scan can't verify the judge because the upside gate often empties the
+  candidate list first (it dropped all 5 on run 30043084820).
+- **force** — full real scan ignoring market hours; may send a real alert.
+- **test** — fake pick through Telegram + the sheet, no scan, no Claude.
+
 ## Gotchas
 - **The cron is a request, not a schedule.** It asks for a run every 30 min
   (18/weekday); GitHub delivers 4–7, 80–100 min apart, up to 22 min late. Never
   write logic requiring a run to land in a specific clock hour — the 3pm ET
   digest window gets skipped outright. Estimate minutes from `gh run list`.
+- **`scan_window(now)` decides what a run may send**, not `market_open` alone:
+  `"alert"` during market hours, `"digest"` after the close on a weekday (scans
+  with final data, never alerts), `None` on weekends and pre-open. The
+  post-close run is the backstop that makes the daily digest independent of the
+  cron; it returns early if anything already went out today, so it costs at most
+  one extra scan a day.
 - **Never sort inside `sentiment.scan`.** Its input is pre-ranked by score by
   `main.py`. It used to sort alphabetically, which gave the sentiment bonus (the
   largest scoring term) only to A-tickers. Same rule for `earnings.check`.
