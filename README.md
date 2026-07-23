@@ -34,10 +34,12 @@ Alerts are 2-3 lines per pick: the setup and upside, the top reasons NOT to
 buy, and the verdict on why it's worth it anyway. You get at least one message
 every day: if no alert fired by 3pm ET, a daily digest lists the day's top
 signals (or says it was a quiet day). If GitHub's cron skips the 3pm hour
-entirely — it often does, see below — the first run after the close says so
-plainly instead, and on weekends a single "market closed" note goes out around
-noon ET (alert memory lives in `state.json`, carried between runs by the
-Actions cache).
+entirely — it often does, see below — the first run after the close scans again
+and sends that digest using the day's final data. Post-close runs only
+summarize; they never alert, since a BUY landing at 6pm is a different message
+from one at 11am. On weekends a single "market closed" note goes out around noon
+ET (alert memory lives in `state.json`, carried between runs by the Actions
+cache).
 
 ## Setup
 
@@ -67,7 +69,10 @@ cent on claude-sonnet-5; quiet runs cost nothing. Measured total: under $1/mo.)
    9am-4pm ET, Mon-Fri. GitHub treats scheduled runs as best-effort and in
    practice delivers 4-7 a day, spaced 80-100 minutes apart — the code is
    written to be correct at whatever cadence actually shows up.
-   Test it now: repo → Actions → stock-alert → "Run workflow".
+   Test it now: repo → Actions → stock-alert → "Run workflow". Two checkboxes:
+   **test** sends a fake pick through Telegram + the sheet without scanning;
+   **force** does a full real scan ignoring market hours, which is how you
+   verify the Claude call after changing the model (it may send a real alert).
 
 ## Run locally
 

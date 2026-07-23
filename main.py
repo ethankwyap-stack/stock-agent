@@ -38,21 +38,31 @@ def market_open(now):
     return now.weekday() < 5 and 9 <= now.hour < 16
 
 
-def closing_note(now):
-    """The once-a-day note for a run that cannot scan. None means stay quiet.
+def scan_window(now):
+    """What this run is allowed to send: "alert", "digest", or None.
 
-    A weekday after the close is NOT "market closed today" — the market traded and
-    we scanned it. GitHub's cron is best-effort (observed 4-7 of the 18 requested
-    runs a day), so the 3pm digest window gets missed outright and this branch is
-    what the user actually reads on those days.
+    A weekday after the close still scans — the day's data is final by then, so
+    it produces the real digest instead of guessing. It must not alert: a BUY
+    that lands at 6pm is a different message from one at 11am.
+
+    This is what makes the day's summary independent of GitHub's cron, which is
+    best-effort (observed 4-7 of the 18 requested runs a day) and regularly skips
+    the 3pm hour entirely.
     """
     if now.weekday() >= 5:
-        return "Market closed today — no scan. Back at it next trading day."
+        return None
+    if market_open(now):
+        return "alert"
     if now.hour >= 16:
-        # ponytail: no top-signals list here, the scan was skipped. Accurate beats
-        # detailed; scan post-close too if the digest content turns out to matter.
-        return "No pick cleared the bar today — nothing worth acting on."
-    return None  # pre-open weekday run: the day isn't over, stay quiet
+        return "digest"
+    return None  # pre-open weekday: the day hasn't happened yet, stay quiet
+
+
+def closing_note(now):
+    """The once-a-day note for a day we never scan at all — weekends only."""
+    if now.weekday() >= 5:
+        return "Market closed today — no scan. Back at it next trading day."
+    return None
 
 
 def main():
@@ -62,16 +72,24 @@ def main():
     state = load_state()
     today = now.date().isoformat()
 
-    if not market_open(now) and "--force" not in sys.argv:
-        # one note a day so "at least one message a day" still holds
+    mode = "alert" if "--force" in sys.argv else scan_window(now)
+
+    if mode is None:
+        # weekend or pre-open: one note a day so "a message every day" still holds
         note = closing_note(now)
         if note and state["last_alert"] != today:
             notify.send(note)
             state["last_alert"] = today
             STATE.write_text(json.dumps(state))
-            log.info("Sent end-of-day note.")
+            log.info("Sent market-closed note.")
         else:
-            log.info("Market closed, skipping (use --force to override).")
+            log.info("Outside scan hours, skipping (use --force to override).")
+        return
+
+    if mode == "digest" and state["last_alert"] == today:
+        # something already went out today; a post-close scan has nothing to add,
+        # and skipping it here is what keeps this to one extra scan per day
+        log.info("Already messaged today, skipping post-close digest scan.")
         return
 
     # ponytail: only today's sends matter for the resend rule — drop older entries
@@ -112,7 +130,8 @@ def main():
         log.info("%d qualified (score+confluence), %d new/stronger since last alert",
                  len(qualified), len(candidates))
 
-        if candidates:
+        # facts + judge only feed alerts, so a digest-mode run skips both
+        if candidates and mode == "alert":
             packs = facts.fetch([s["ticker"] for s in candidates])
             for s in candidates:
                 s["facts"] = packs.get(s["ticker"], {})
@@ -125,7 +144,7 @@ def main():
                          MIN_UPSIDE_PCT)
             candidates = finalists
 
-        if candidates:
+        if candidates and mode == "alert":
             picks = analyzer.judge(candidates)
             if picks:
                 notify.send("\n\n".join(p["line"] for p in picks))
@@ -140,8 +159,9 @@ def main():
                 log.info("Claude judged none of %d candidates actionable — staying quiet.",
                          len(candidates))
 
-    # daily digest: last scan hour (3pm ET), nothing sent today -> report the day anyway
-    if now.hour == 15 and state["last_alert"] != today:
+    # digest: the 3pm run if one lands, otherwise the first run after the close.
+    # Two triggers, not one, because the cron can't be relied on to hit either.
+    if state["last_alert"] != today and (mode == "digest" or now.hour == 15):
         if ranked:
             def _names(s):
                 return ", ".join(n for n, on in [
@@ -174,11 +194,15 @@ def _selfcheck():
 
     assert market_open(wed_open)
     assert not market_open(wed_pre) and not market_open(wed_close) and not market_open(sat)
-    # the regression: a weekday after the close must never claim the market didn't trade
-    assert "cleared the bar" in closing_note(wed_close)
-    assert "Market closed" not in closing_note(wed_close)
+    assert scan_window(wed_open) == "alert"
+    # the regression: a weekday after the close scans and reports the real day.
+    # It must never claim the market didn't trade, and must never alert.
+    assert scan_window(wed_close) == "digest"
+    assert closing_note(wed_close) is None
+    # weekend and pre-open never scan; only the weekend gets a note
+    assert scan_window(sat) is None and scan_window(wed_pre) is None
     assert "Market closed" in closing_note(sat)
-    assert closing_note(wed_pre) is None  # day isn't over yet, stay quiet
+    assert closing_note(wed_pre) is None
     print("time/message self-check ok")
 
     # a state file missing "sent" must not KeyError the whole run
