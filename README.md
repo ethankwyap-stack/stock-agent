@@ -1,6 +1,6 @@
 # Stock Alert Agent
 
-Hourly scanner that screens S&P 500 stocks for unusual volume, 20-day breakouts,
+Scanner that screens S&P 500 stocks for unusual volume, 20-day breakouts,
 and RSI extremes, cross-references Yahoo sentiment and upcoming earnings, then has
 Claude *judge* which candidates (0–5) a cautious trader would actually act on today.
 Only the ones that clear that bar reach you on Telegram — most runs send nothing.
@@ -11,10 +11,10 @@ Runs free on GitHub Actions. No servers.
 
 ```
 screener.py  -> technical signals + 30d volatility (yfinance, S&P 500 from Wikipedia)
-sentiment.py -> Yahoo Finance comments + news headline sentiment (free, no key)
-earnings.py  -> earnings within 7 days + avg historical post-earnings move
+sentiment.py -> Yahoo news headline sentiment, top 20 by score (free, no key)
+earnings.py  -> earnings within 7 days + avg post-earnings move, top 30 by score
 facts.py     -> finalist fact pack: analyst target, 52wk position, P/E, beta
-analyzer.py  -> composite score + Claude (claude-sonnet-4-6) as skeptical judge
+analyzer.py  -> composite score + Claude (claude-sonnet-5) as skeptical judge
 notify.py    -> Telegram bot message
 main.py      -> orchestrates; gates candidates, remembers what it already sent
 ```
@@ -33,9 +33,11 @@ Gates a ticker must clear, in order:
 Alerts are 2-3 lines per pick: the setup and upside, the top reasons NOT to
 buy, and the verdict on why it's worth it anyway. You get at least one message
 every day: if no alert fired by 3pm ET, a daily digest lists the day's top
-signals (or says it was a quiet day), and on weekends a single "market closed"
-note goes out around noon ET (alert memory lives in `state.json`, carried
-between runs by the Actions cache).
+signals (or says it was a quiet day). If GitHub's cron skips the 3pm hour
+entirely — it often does, see below — the first run after the close says so
+plainly instead, and on weekends a single "market closed" note goes out around
+noon ET (alert memory lives in `state.json`, carried between runs by the
+Actions cache).
 
 ## Setup
 
@@ -52,8 +54,8 @@ Do these one at a time.
 ### 2. Anthropic API key
 
 Get one at https://console.anthropic.com → API Keys. That's `ANTHROPIC_API_KEY`.
-(This is the only paid service — each run that finds signals costs a fraction
-of a cent on claude-sonnet-4-6; quiet runs cost nothing.)
+(This is the only paid service — each run that finds signals costs about half a
+cent on claude-sonnet-5; quiet runs cost nothing. Measured total: under $1/mo.)
 
 ### 3. GitHub
 
@@ -61,7 +63,10 @@ of a cent on claude-sonnet-4-6; quiet runs cost nothing.)
 2. Repo → Settings → Secrets and variables → Actions → New repository secret.
    Add all three: `ANTHROPIC_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`.
    (Sentiment comes from Yahoo Finance's public comment/news APIs — no key needed.)
-3. The workflow (`.github/workflows/run.yml`) runs hourly 9am-4pm ET, Mon-Fri.
+3. The workflow (`.github/workflows/run.yml`) asks for a run every 30 minutes,
+   9am-4pm ET, Mon-Fri. GitHub treats scheduled runs as best-effort and in
+   practice delivers 4-7 a day, spaced 80-100 minutes apart — the code is
+   written to be correct at whatever cadence actually shows up.
    Test it now: repo → Actions → stock-alert → "Run workflow".
 
 ## Run locally
@@ -75,8 +80,9 @@ python main.py --force   # --force skips the market-hours check
 Self-checks (no API keys needed):
 
 ```bash
-python screener.py   # RSI math
-python analyzer.py   # scoring/ranking
+python screener.py       # RSI math
+python analyzer.py       # scoring/ranking + Claude reply parsing
+python main.py --selfcheck   # market hours, end-of-day message, state loading
 ```
 
 ## Tuning
@@ -89,6 +95,11 @@ python analyzer.py   # scoring/ranking
 - `MIN_UPSIDE_PCT` in `main.py` (default 10.0) — required analyst-target upside.
   Note: analyst targets skew optimistic and lag news, so this is a sanity floor,
   not a prediction.
+- `SENTIMENT_TICKERS` / `EARNINGS_TICKERS` in `main.py` (20 / 30) — how many of
+  the top-scoring tickers get the slow sentiment and earnings lookups. These are
+  ranked by technical score, never alphabetically. Raising them costs runtime
+  (earnings is the slowest stage by far); lowering them risks missing a mover
+  that was ranked low on technicals alone.
 - Claude's bar lives in `SYSTEM` in `analyzer.py` — edit the prompt to make the
   judge stricter or looser.
 - Scoring weights live in `analyzer.rank()`: volume 2, breakout 2, RSI 1,

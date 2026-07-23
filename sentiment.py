@@ -35,10 +35,15 @@ def _comments(board_id, count=25):
     return texts
 
 
-def scan(valid_tickers, limit=None):
-    """Return {ticker: {"mentions": n_comments, "sentiment": net_tone}}."""
+def scan(tickers):
+    """Return {ticker: {"mentions": n_comments, "sentiment": net_tone}}.
+
+    `tickers` is caller-ordered, strongest first, and walked in that order.
+    Never sort here: sorting made coverage alphabetical, so the sentiment bonus
+    (up to 4 points, the biggest term in the score) only ever reached A-names.
+    """
     scores = {}
-    for t in sorted(valid_tickers)[:MAX_TICKERS]:
+    for t in list(tickers)[:MAX_TICKERS]:
         try:
             tk = yf.Ticker(t)
             texts = []

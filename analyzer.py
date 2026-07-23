@@ -68,8 +68,13 @@ def judge(candidates):
     """Ask Claude which candidates merit an alert. Returns picks (possibly empty)."""
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
     resp = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1500,
+        model="claude-sonnet-5",
+        # Sonnet 5 runs adaptive thinking when `thinking` is omitted (4.6 did not),
+        # so max_tokens now covers thinking + the JSON. 1500 risked a truncated
+        # reply, which parse_picks reads as "no picks" — alerts would just stop.
+        max_tokens=4000,
+        thinking={"type": "adaptive"},
+        output_config={"effort": "low"},  # judging 5 tickers; effort defaults to "high"
         system=SYSTEM,
         messages=[{"role": "user", "content": json.dumps(candidates)}],
     )

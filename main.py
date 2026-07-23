@@ -13,18 +13,46 @@ MIN_SCORE = 3.0      # ponytail: one weak signal alone never pages you; tune if 
 MIN_FAMILIES = 2     # signal families (volume/breakout/RSI/earnings) required before Claude even sees it
 RESEND_JUMP = 2.0    # re-alert a ticker the same day only if its score rose by this much
 MIN_UPSIDE_PCT = 10.0  # analyst mean target must sit this far above price, else dropped pre-Claude
+# Sentiment and earnings are the slow lookups (earnings alone was 6min of a 9min
+# run), so they cover the strongest technical names only — ranked by score, never
+# alphabetically. An alphabetical cut handed the sentiment bonus, the single
+# biggest scoring term at 4 points, to A-tickers and never to WMT or XOM.
+# ponytail: 30 is a safety margin, not a tuned number — only the top 5 ever reach
+# Claude, so a name below rank 30 can't win even with a full earnings bump.
+SENTIMENT_TICKERS = 20
+EARNINGS_TICKERS = 30
 STATE = pathlib.Path(__file__).parent / "state.json"
 
 
 def load_state():
     try:
-        return json.loads(STATE.read_text())
+        state = json.loads(STATE.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"sent": {}, "last_alert": None}
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    return {"sent": state.get("sent") or {}, "last_alert": state.get("last_alert")}
 
 
 def market_open(now):
     return now.weekday() < 5 and 9 <= now.hour < 16
+
+
+def closing_note(now):
+    """The once-a-day note for a run that cannot scan. None means stay quiet.
+
+    A weekday after the close is NOT "market closed today" — the market traded and
+    we scanned it. GitHub's cron is best-effort (observed 4-7 of the 18 requested
+    runs a day), so the 3pm digest window gets missed outright and this branch is
+    what the user actually reads on those days.
+    """
+    if now.weekday() >= 5:
+        return "Market closed today — no scan. Back at it next trading day."
+    if now.hour >= 16:
+        # ponytail: no top-signals list here, the scan was skipped. Accurate beats
+        # detailed; scan post-close too if the digest content turns out to matter.
+        return "No pick cleared the bar today — nothing worth acting on."
+    return None  # pre-open weekday run: the day isn't over, stay quiet
 
 
 def main():
@@ -35,13 +63,13 @@ def main():
     today = now.date().isoformat()
 
     if not market_open(now) and "--force" not in sys.argv:
-        # weekend cron fires once a day so "at least one message a day" still holds;
-        # hour check keeps a pre-open weekday run (8am EST) from firing it early
-        if state["last_alert"] != today and (now.weekday() >= 5 or now.hour >= 16):
-            notify.send("Market closed today — no scan. Back at it next trading day.")
+        # one note a day so "at least one message a day" still holds
+        note = closing_note(now)
+        if note and state["last_alert"] != today:
+            notify.send(note)
             state["last_alert"] = today
             STATE.write_text(json.dumps(state))
-            log.info("Sent market-closed daily note.")
+            log.info("Sent end-of-day note.")
         else:
             log.info("Market closed, skipping (use --force to override).")
         return
@@ -54,16 +82,22 @@ def main():
     log.info("screener: %d tickers with signals", len(signals))
 
     if signals:
-        universe = {s["ticker"] for s in signals}
+        # Technicals-only pass first: it decides WHICH tickers earn the slow
+        # sentiment/earnings lookups. rank() rebuilds score from scratch every
+        # call, so ranking twice is safe.
+        pre = analyzer.rank(signals, {}, {})
+        focus = [s["ticker"] for s in pre[:SENTIMENT_TICKERS]]
         try:
-            sent = sentiment.scan(universe)
-            log.info("sentiment: %d tickers with Yahoo comment/news data", len(sent))
+            sent = sentiment.scan(focus)
+            log.info("sentiment: %d of top %d tickers with Yahoo comment/news data",
+                     len(sent), len(focus))
         except Exception:
             log.exception("sentiment scan failed, continuing without it")
             sent = {}
         try:
-            earn = earnings.check(sorted(universe))
-            log.info("earnings: %d tickers reporting within 7 days", len(earn))
+            earn = earnings.check([s["ticker"] for s in pre[:EARNINGS_TICKERS]])
+            log.info("earnings: %d of top %d tickers reporting within 7 days",
+                     len(earn), min(EARNINGS_TICKERS, len(pre)))
         except Exception:
             log.exception("earnings check failed, continuing without it")
             earn = {}
@@ -126,5 +160,39 @@ def main():
     STATE.write_text(json.dumps(state))
 
 
+def _selfcheck():
+    """Covers the two branches a flaky cron actually exercises, and can't be
+    checked by waiting for 4pm. Run: python main.py --selfcheck
+    """
+    global STATE
+    import tempfile
+    ny = ZoneInfo("America/New_York")
+    wed_pre = datetime(2026, 7, 22, 8, 30, tzinfo=ny)
+    wed_open = datetime(2026, 7, 22, 11, 0, tzinfo=ny)
+    wed_close = datetime(2026, 7, 22, 16, 5, tzinfo=ny)
+    sat = datetime(2026, 7, 18, 12, 0, tzinfo=ny)
+
+    assert market_open(wed_open)
+    assert not market_open(wed_pre) and not market_open(wed_close) and not market_open(sat)
+    # the regression: a weekday after the close must never claim the market didn't trade
+    assert "cleared the bar" in closing_note(wed_close)
+    assert "Market closed" not in closing_note(wed_close)
+    assert "Market closed" in closing_note(sat)
+    assert closing_note(wed_pre) is None  # day isn't over yet, stay quiet
+    print("time/message self-check ok")
+
+    # a state file missing "sent" must not KeyError the whole run
+    orig = STATE
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write('{"last_alert": "2026-07-22"}')
+            STATE = pathlib.Path(f.name)
+        s = load_state()
+        assert s["sent"] == {} and s["last_alert"] == "2026-07-22", s
+    finally:
+        STATE = orig
+    print("state self-check ok")
+
+
 if __name__ == "__main__":
-    main()
+    _selfcheck() if "--selfcheck" in sys.argv else main()
