@@ -1,5 +1,7 @@
 state.json
-picks_log.jsonl
+# picks_log.jsonl is deliberately NOT ignored — the committed copy seeds pick
+# history so outcomes.py has something to grade. The Actions cache copy wins
+# after the first run; see CLAUDE.md.
 __pycache__/
 .env
 .venv/

@@ -84,6 +84,14 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
   `doGet`, so pick history cannot be read back out of the sheet. That is why
   `outcomes.py` keeps its own `picks_log.jsonl`, which rides the same Actions
   cache as `state.json`; eviction costs one scorecard and never an alert.
+- **`picks_log.jsonl` is committed AND cached, and the cache wins.** The repo copy
+  is a seed of the 11 picks from Jul 16–22 2026 (generated from the sheet's CSV
+  export, never typed by hand — a wrong entry price corrupts every return computed
+  from it, silently and forever). `actions/checkout` lays down the seed, then the
+  cache restore overwrites it once any cache contains the file. So editing the
+  committed copy changes nothing in production after that first run, and a cache
+  eviction re-grades the 11 seeded picks. Both are cosmetic — a repeated scorecard,
+  never a missed alert. Note it is deliberately absent from `.gitignore`.
 - **`state.json` lives in the Actions cache**, not the repo. Cache keys are
   immutable: save under `state-${{ github.run_id }}`, restore by prefix `state-`.
   Eviction just resets alert memory — harmless.
