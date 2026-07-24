@@ -28,7 +28,7 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
 .venv/bin/python main.py --selfcheck   # offline: time/message branches, state loading
 .venv/bin/python analyzer.py           # offline: scoring + 7 Claude-reply shapes
 .venv/bin/python screener.py           # offline: RSI math
-.venv/bin/python judge_smoke.py        # ONE real Claude call, ~half a cent, needs the key
+.venv/bin/python judge_smoke.py        # ONE real Claude call on 2 candidates, ~half a cent, needs the key
 .venv/bin/python main.py --force       # full run, needs all keys, really sends Telegram
 ```
 Local `.venv` is Python 3.9; Actions runs 3.12.
@@ -60,6 +60,16 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
 - **`parse_picks` must stay tolerant.** It regex-extracts `{...}` from anywhere
   in the reply and never raises; a bad reply means no picks, not a dead run.
   Do not "tighten" it back to a strict `json.loads`.
+- **Claude sometimes ends one `}` short of valid JSON** (seen Jul 24 2026 with
+  `stop_reason: end_turn` — not a max_tokens truncation), and the greedy regex
+  then also eats the closing `]`, silently dropping a good pick.
+  `_close_open_brackets()` retries with the unclosed brackets appended. It
+  deliberately refuses to repair a reply with an **unterminated string** — that
+  one died mid-sentence, and half an alert is worse than none.
+- **`judge_smoke.py` exits non-zero on a bad judgment**, so the workflow step
+  fails loudly. It sends two candidates in one call — JNJ must be accepted, AAPL
+  must be rejected — and prints the raw reply and `stop_reason` every time, which
+  is the only way to tell a real rejection from a malformed one.
 - **Yahoo's OpenWeb comments endpoint 403s since Jul 2026** — sentiment is
   headlines only; the always-0 `mentions` count and the scoring bonus it fed are
   both gone as of Jul 24 2026. If sentiment logs 0 tickers,
