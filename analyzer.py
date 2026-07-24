@@ -61,20 +61,58 @@ def rank(signals, sentiment, earnings):
     return sorted(signals, key=lambda s: s["score"], reverse=True)
 
 
+def _close_open_brackets(s):
+    """Append the brackets Claude left open, or return s unchanged if a string is open.
+
+    Observed 2026-07-24: a reply ended `..."}]` — valid JSON one `}` short, with
+    stop_reason end_turn, so not a truncation that more max_tokens would fix. The
+    greedy regex below then compounds it by matching to the LAST `}`, eating the
+    closing `]` too, and a correctly-judged pick was silently dropped.
+
+    An unterminated string means the reply died mid-sentence; those are left to fail
+    so a half-written alert never goes out. Quote-aware, so a brace inside a line
+    value is not counted.
+    """
+    stack, in_str, esc = [], False, False
+    for ch in s:
+        if esc:
+            esc = False
+        elif in_str and ch == "\\":
+            esc = True
+        elif ch == '"':
+            in_str = not in_str
+        elif not in_str:
+            if ch in "{[":
+                stack.append("}" if ch == "{" else "]")
+            elif stack and ch == stack[-1]:
+                stack.pop()
+    return s if in_str else s + "".join(reversed(stack))
+
+
 def parse_picks(text, valid):
     """Pull the picks out of Claude's reply. Never raises — bad reply means no picks.
 
-    Claude sometimes wraps the JSON in prose or code fences, or just says in plain
-    English that nothing qualifies; a quiet run beats a crashed one either way.
+    Claude sometimes wraps the JSON in prose or code fences, drops a closing brace,
+    or just says in plain English that nothing qualifies; a quiet run beats a crashed
+    one either way. Two attempts: the greedy `{...}` match, then the same text with
+    unclosed brackets repaired.
     """
-    blob = re.search(r"\{.*\}", text, re.S)
-    try:
-        picks = json.loads(blob.group())["picks"] if blob else []
-    except (json.JSONDecodeError, KeyError, TypeError):
-        print("judge: unparseable response, treating as no picks:", repr(text[:500]))
+    start = text.find("{")
+    if start < 0:
         return []
-    return [p for p in picks if isinstance(p, dict)
-            and p.get("ticker") in valid and p.get("line")]
+    blob = re.search(r"\{.*\}", text, re.S)
+    attempts = ([blob.group()] if blob else []) + [_close_open_brackets(text[start:])]
+    for attempt in attempts:
+        try:
+            picks = json.loads(attempt)["picks"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+        if not isinstance(picks, list):
+            continue
+        return [p for p in picks if isinstance(p, dict)
+                and p.get("ticker") in valid and p.get("line")]
+    print("judge: unparseable response, treating as no picks:", repr(text[:500]))
+    return []
 
 
 # Set by judge() on every call. parse_picks is silent when the reply has no braces,
@@ -136,6 +174,14 @@ if __name__ == "__main__":
     assert _parse("None of these candidates are actionable today.") == []     # plain English
     assert _parse('{"picks": [{"ticker": "ZZZ", "line": "x"}]}') == []        # hallucinated ticker
     assert _parse('{"picks": [{"ticker": "BBB"}]}') == []                     # missing line
-    assert _parse('{"picks": [{"ticker": "BBB", "line": "x"') == []           # truncated
     assert _parse('{"verdict": "no"}') == []                                  # wrong schema
+    assert _parse('{"picks": 5}') == []                                       # picks not a list
+    # brackets left open but every string closed: content is complete, so recover it.
+    # This is the real 2026-07-24 reply shape — valid JSON one `}` short — which
+    # silently cost a correctly-judged pick before _close_open_brackets existed.
+    assert len(_parse('{"picks": [{"ticker": "BBB", "line": "BBB $10 — up\\n'
+                      'Invalid below: $9.10"}]')) == 1
+    assert len(_parse('{"picks": [{"ticker": "BBB", "line": "x"')) == 1
+    # but a reply that died mid-sentence stays dropped — never send half an alert
+    assert _parse('{"picks": [{"ticker": "BBB", "line": "BBB $10 — up') == []
     print("judge-parse self-check ok")
