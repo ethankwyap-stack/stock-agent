@@ -30,8 +30,9 @@ Gates a ticker must clear, in order:
    case from the fact pack and includes the ticker only if the upside clearly
    outweighs it. Zero picks is a normal outcome.
 
-Alerts are 2-3 lines per pick: the setup and upside, the top reasons NOT to
-buy, and the verdict on why it's worth it anyway. You get at least one message
+Alerts are 3-4 lines per pick: the setup and upside, the top reasons NOT to
+buy, the verdict on why it's worth it anyway, and the invalidation level below
+which the setup is simply wrong. You get at least one message
 every day: if no alert fired by 3pm ET, a daily digest lists the day's top
 signals (or says it was a quiet day). If GitHub's cron skips the 3pm hour
 entirely — it often does, see below — the first run after the close scans again

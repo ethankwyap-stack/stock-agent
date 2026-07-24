@@ -64,6 +64,9 @@ def scan(tickers=None):
         if sig:
             sig.update(ticker=t, price=round(float(close.iloc[-1]), 2),
                        rsi=round(r, 1), volume_ratio=round(vol_ratio, 1),
+                       # the prior 20-day closing low: the level that says the
+                       # setup failed, so every alert can carry an exit condition
+                       stop_ref=round(float(close.iloc[-21:-1].min()), 2),
                        volatility_30d_annualized_pct=round(
                            float(close.pct_change().tail(30).std()) * 252 ** 0.5 * 100, 1))
             signals.append(sig)

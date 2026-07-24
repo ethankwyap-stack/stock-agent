@@ -18,9 +18,12 @@ SYSTEM = (
     "list is a good outcome. Respond with ONLY this JSON, no other text: "
     '{"picks": [{"ticker": "XYZ", "line": "XYZ $price — setup and upside\\n'
     'Risks: the 1-2 strongest reasons NOT to buy\\nVerdict: why it is worth it '
-    'anyway"}]}. Each line value is 2-3 short plain-text lines joined by \\n, '
-    "under 400 chars, citing the actual numbers, strongest pick first, no "
-    "financial-advice disclaimers."
+    'anyway\\nInvalid below: $<level>"}]}. Each line value is 3-4 short '
+    "plain-text lines joined by \\n, under 480 chars, citing the actual numbers, "
+    "strongest pick first, no financial-advice disclaimers. The final line must "
+    "always be the invalidation level — the candidate's stop_ref, or a tighter "
+    "level if its own numbers justify one — so every alert states what would "
+    "prove the setup wrong."
 )
 
 
@@ -116,6 +119,8 @@ if __name__ == "__main__":
     good = '{"picks": [{"ticker": "BBB", "line": "BBB $10 — up"}]}'
     assert len(_parse(good)) == 1
     assert len(_parse("Here are my picks:\n```json\n" + good + "\n```")) == 1  # prose + fences
+    assert len(_parse('{"picks": [{"ticker": "BBB", "line": "BBB $10 — up\\nRisks: x\\n'
+                      'Verdict: y\\nInvalid below: $9.10"}]}')) == 1          # 4-line shape
     assert _parse("None of these candidates are actionable today.") == []     # plain English
     assert _parse('{"picks": [{"ticker": "ZZZ", "line": "x"}]}') == []        # hallucinated ticker
     assert _parse('{"picks": [{"ticker": "BBB"}]}') == []                     # missing line
