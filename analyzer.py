@@ -77,8 +77,17 @@ def parse_picks(text, valid):
             and p.get("ticker") in valid and p.get("line")]
 
 
+# Set by judge() on every call. parse_picks is silent when the reply has no braces,
+# so a genuine rejection, a prose-only reply and a truncated one all look like 0 picks
+# in the logs. judge_smoke.py prints these to tell them apart. ponytail: globals, not a
+# return-tuple, so no caller has to change.
+LAST_REPLY = ""
+LAST_STOP_REASON = ""
+
+
 def judge(candidates):
     """Ask Claude which candidates merit an alert. Returns picks (possibly empty)."""
+    global LAST_REPLY, LAST_STOP_REASON
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
     resp = client.messages.create(
         model="claude-sonnet-5",
@@ -92,6 +101,7 @@ def judge(candidates):
         messages=[{"role": "user", "content": json.dumps(candidates)}],
     )
     text = next((b.text for b in resp.content if b.type == "text"), "")
+    LAST_REPLY, LAST_STOP_REASON = text, resp.stop_reason
     return parse_picks(text, {c["ticker"] for c in candidates})
 
 
