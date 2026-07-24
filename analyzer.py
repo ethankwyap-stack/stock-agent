@@ -35,7 +35,11 @@ def rank(signals, sentiment, earnings):
         t = s["ticker"]
         score = 2.0 * s.get("unusual_volume", False)
         score += 2.0 * s.get("breakout_20d", False)
-        score += 1.0 * (s.get("rsi_oversold", False) or s.get("rsi_overbought", False))
+        # RSI is directional, the alert is not: overbought on a fresh breakout is a
+        # caution, so it subtracts. signal_types() still counts it as the RSI family
+        # firing — confluence measures independent evidence, not direction.
+        score += 1.0 * s.get("rsi_oversold", False)
+        score -= 1.0 * s.get("rsi_overbought", False)
         sent = sentiment.get(t)
         if sent:
             score += min(sent["mentions"], 5) * 0.5
@@ -92,6 +96,12 @@ if __name__ == "__main__":
     assert ranked[1]["score"] == 1.0
     # confluence: BBB fired volume+breakout+earnings = 3 families, AAA only RSI = 1
     assert signal_types(ranked[0]) == 3 and signal_types(ranked[1]) == 1
+    # direction: a breakout that is already overbought is worth less than the
+    # breakout alone (2.0 - 1.0), not more (it used to score 3.0)
+    ob = rank([{"ticker": "CCC", "breakout_20d": True, "rsi_overbought": True}], {}, {})
+    assert ob[0]["score"] == 1.0, ob
+    # but it still counts as two families firing, so confluence is unaffected
+    assert signal_types(ob[0]) == 2
     print("rank self-check ok")
 
     # self-check: the response shapes that crashed live runs must all parse or degrade to []
