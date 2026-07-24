@@ -47,7 +47,9 @@ def rank(signals, sentiment, earnings):
         score -= 1.0 * s.get("rsi_overbought", False)
         sent = sentiment.get(t)
         if sent:
-            score += min(sent["mentions"], 5) * 0.5
+            # Headline tone only, capped at +/-1.5. There used to be a mention-count
+            # bonus too, but Yahoo's comments endpoint has 403'd since Jul 2026, so
+            # the count was always 0 and the term was dead weight.
             score += max(-3, min(3, sent["sentiment"])) * 0.5
             s["yahoo_sentiment"] = sent
         if t in earnings:
@@ -97,10 +99,10 @@ if __name__ == "__main__":
     # self-check: multi-signal ticker with sentiment + earnings outranks a lone RSI hit
     sigs = [{"ticker": "AAA", "rsi_oversold": True},
             {"ticker": "BBB", "unusual_volume": True, "breakout_20d": True}]
-    ranked = rank(sigs, {"BBB": {"mentions": 3, "sentiment": 2}},
+    ranked = rank(sigs, {"BBB": {"sentiment": 2}},
                   {"BBB": {"earnings_date": "2026-07-14", "avg_post_earnings_move_pct": 5.0}})
-    # 2.0 volume + 2.0 breakout + 1.5 mentions + 1.0 tone; earnings adds nothing
-    assert ranked[0]["ticker"] == "BBB" and ranked[0]["score"] == 6.5, ranked[0]
+    # 2.0 volume + 2.0 breakout + 1.0 tone; earnings is a risk flag worth 0
+    assert ranked[0]["ticker"] == "BBB" and ranked[0]["score"] == 5.0, ranked[0]
     assert ranked[1]["score"] == 1.0
     # confluence: BBB fired volume+breakout+earnings = 3 families, AAA only RSI = 1
     assert signal_types(ranked[0]) == 3 and signal_types(ranked[1]) == 1

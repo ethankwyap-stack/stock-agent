@@ -36,11 +36,16 @@ def _comments(board_id, count=25):
 
 
 def scan(tickers):
-    """Return {ticker: {"mentions": n_comments, "sentiment": net_tone}}.
+    """Return {ticker: {"sentiment": net_tone}}.
+
+    A comment count used to be returned alongside the tone, but Yahoo's OpenWeb
+    endpoint has 403'd since Jul 2026, so it was always 0 — the scoring term it
+    fed is gone. Comments are still collected in case the endpoint returns; they
+    feed the tone like any other text.
 
     `tickers` is caller-ordered, strongest first, and walked in that order.
-    Never sort here: sorting made coverage alphabetical, so the sentiment bonus
-    (up to 4 points, the biggest term in the score) only ever reached A-names.
+    Never sort here: sorting made coverage alphabetical, so the sentiment score
+    only ever reached A-names.
     """
     scores = {}
     for t in list(tickers)[:MAX_TICKERS]:
@@ -53,13 +58,11 @@ def scan(tickers):
                     texts += _comments(board)
                 except Exception:
                     pass  # OpenWeb 403s since Jul 2026; news headlines below still score
-            n_comments = len(texts)
             for item in tk.news or []:
                 content = item.get("content", item)
                 texts.append(content.get("title") or "")
             if texts:
-                scores[t] = {"mentions": n_comments,
-                             "sentiment": sum(_tone(x) for x in texts)}
+                scores[t] = {"sentiment": sum(_tone(x) for x in texts)}
         except Exception:
             continue  # one bad ticker shouldn't kill the run
         time.sleep(0.3)  # be polite to the free APIs

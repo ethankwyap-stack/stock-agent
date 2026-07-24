@@ -25,9 +25,13 @@ Gates a ticker must clear, in order:
 1. Score >= 2.5 AND at least 2 independent signal families
    (volume / breakout / RSI / earnings).
 2. Not already alerted today, unless its score jumped by 2+.
-3. Analyst mean price target at least 10% above current price
-   (the measurable-upside floor; no target = dropped).
-4. Claude, prompted as a skeptic whose default is DO NOT BUY, builds the bear
+3. Believable analyst upside: either 10–40% above the current price, or — for a
+   momentum name sitting at 80%+ of its 52-week range — merely not below it.
+   Over 40% is dropped as a target nobody has cut yet; no target at all is
+   dropped too.
+4. 30-day volatility no more than 4× the upside, with a 5% floor on the upside
+   so momentum names aren't killed by their own deliberately small target.
+5. Claude, prompted as a skeptic whose default is DO NOT BUY, builds the bear
    case from the fact pack and includes the ticker only if the upside clearly
    outweighs it. Zero picks is a normal outcome.
 
@@ -99,9 +103,13 @@ python main.py --selfcheck   # market hours, end-of-day message, state loading
   Claude even sees a ticker; set to 1 to loosen, 3 to only hear about monsters.
 - `RESEND_JUMP` in `main.py` (default 2.0) — same-day re-alerts need this much
   score improvement.
-- `MIN_UPSIDE_PCT` in `main.py` (default 10.0) — required analyst-target upside.
-  Note: analyst targets skew optimistic and lag news, so this is a sanity floor,
-  not a prediction.
+- `MIN_UPSIDE_PCT` / `MAX_UPSIDE_PCT` / `MOMENTUM_RANGE_PCT` in `main.py`
+  (10.0 / 40.0 / 80.0) — the upside gate. Analyst targets skew optimistic and
+  lag price, so the band is a sanity check, not a prediction: under the floor
+  there's nothing to weigh, over the ceiling the target is probably just stale.
+- `VOL_UPSIDE_MULT` in `main.py` (default 4.0) — how many times its upside a
+  stock's 30-day volatility may reach before it's dropped as too noisy to bother
+  judging.
 - `SENTIMENT_TICKERS` / `EARNINGS_TICKERS` in `main.py` (20 / 30) — how many of
   the top-scoring tickers get the slow sentiment and earnings lookups. These are
   ranked by technical score, never alphabetically. Raising them costs runtime
@@ -109,5 +117,7 @@ python main.py --selfcheck   # market hours, end-of-day message, state loading
   that was ranked low on technicals alone.
 - Claude's bar lives in `SYSTEM` in `analyzer.py` — edit the prompt to make the
   judge stricter or looser.
-- Scoring weights live in `analyzer.rank()`: volume 2, breakout 2, RSI 1,
-  Yahoo sentiment up to 4, earnings 2.
+- Scoring weights live in `analyzer.rank()`: volume 2.0, breakout 2.0, RSI +1.0
+  when oversold and −1.0 when overbought (the alert is a BUY, so an overbought
+  breakout is a caution), headline tone ±1.5, earnings 0 — an upcoming report is
+  event risk for the judge to weigh, not a merit worth points.

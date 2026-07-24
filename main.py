@@ -19,8 +19,9 @@ MOMENTUM_RANGE_PCT = 80.0  # at/near 52wk highs, "analysts aren't below price" i
 VOL_UPSIDE_MULT = 4.0      # drop a candidate whose 30d volatility exceeds this many x its upside
 # Sentiment and earnings are the slow lookups (earnings alone was 6min of a 9min
 # run), so they cover the strongest technical names only — ranked by score, never
-# alphabetically. An alphabetical cut handed the sentiment bonus, the single
-# biggest scoring term at 4 points, to A-tickers and never to WMT or XOM.
+# alphabetically. An alphabetical cut handed the sentiment score to A-tickers and
+# never to WMT or XOM. That term is worth +/-1.5 now, not the 4 points it carried
+# when the always-zero mention-count bonus was still in the score.
 # ponytail: 30 is a safety margin, not a tuned number — only the top 5 ever reach
 # Claude, so a name below rank 30 can't win even with a full earnings bump.
 SENTIMENT_TICKERS = 20

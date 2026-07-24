@@ -52,8 +52,8 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
   cron; it returns early if anything already went out today, so it costs at most
   one extra scan a day.
 - **Never sort inside `sentiment.scan`.** Its input is pre-ranked by score by
-  `main.py`. It used to sort alphabetically, which gave the sentiment bonus (the
-  largest scoring term) only to A-tickers. Same rule for `earnings.check`.
+  `main.py`. It used to sort alphabetically, which gave the sentiment score only
+  to A-tickers. Same rule for `earnings.check`.
 - **Sonnet 5 thinks by default.** Omitting `thinking` enables adaptive thinking
   (4.6 did not), so `max_tokens` must cover thinking + the JSON. A truncated
   reply parses as "no picks" and silently stops alerts — it does not error.
@@ -61,7 +61,8 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
   in the reply and never raises; a bad reply means no picks, not a dead run.
   Do not "tighten" it back to a strict `json.loads`.
 - **Yahoo's OpenWeb comments endpoint 403s since Jul 2026** — sentiment is
-  headlines only and `mentions` is always 0. If sentiment logs 0 tickers,
+  headlines only; the always-0 `mentions` count and the scoring bonus it fed are
+  both gone as of Jul 24 2026. If sentiment logs 0 tickers,
   suspect yfinance `.info`/news, and note `sentiment.py` swallows per-ticker errors.
 - **The sheet webhook is write-only** — `sheet_webhook.gs` defines `doPost` and no
   `doGet`, so pick history cannot be read back out of the sheet. That is why
