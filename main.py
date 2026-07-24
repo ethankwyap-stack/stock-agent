@@ -12,7 +12,9 @@ log = logging.getLogger("stock-agent")
 MIN_SCORE = 3.0      # ponytail: one weak signal alone never pages you; tune if too quiet/noisy
 MIN_FAMILIES = 2     # signal families (volume/breakout/RSI/earnings) required before Claude even sees it
 RESEND_JUMP = 2.0    # re-alert a ticker the same day only if its score rose by this much
-MIN_UPSIDE_PCT = 10.0  # analyst mean target must sit this far above price, else dropped pre-Claude
+MIN_UPSIDE_PCT = 10.0      # ordinary candidates need this much analyst-target upside
+MAX_UPSIDE_PCT = 40.0      # more than this reads as a target nobody cut, not real upside
+MOMENTUM_RANGE_PCT = 80.0  # at/near 52wk highs, "analysts aren't below price" is upside enough
 # Sentiment and earnings are the slow lookups (earnings alone was 6min of a 9min
 # run), so they cover the strongest technical names only — ranked by score, never
 # alphabetically. An alphabetical cut handed the sentiment bonus, the single
@@ -56,6 +58,29 @@ def scan_window(now):
     if now.hour >= 16:
         return "digest"
     return None  # pre-open weekday: the day hasn't happened yet, stay quiet
+
+
+def upside_gate(facts) -> tuple[bool, str]:
+    """Is there believable analyst upside here? -> (passed, reason).
+
+    Analyst targets lag price, so a plain ">= 10% upside" floor selects for falling
+    knives: a stock that just dropped shows big upside only because nobody has cut
+    the target yet, while a strong name near its highs shows almost none. It once
+    emptied all 5 candidates. Hence two ways through — ordinary upside inside a
+    believable band, or a momentum name whose analysts merely aren't below price.
+    """
+    up = facts.get("target_upside_pct")
+    if up is None:
+        return False, "no analyst target"
+    if up > MAX_UPSIDE_PCT:
+        return False, f"stale-target suspect, upside {up}% over {MAX_UPSIDE_PCT:.0f}%"
+    if up >= MIN_UPSIDE_PCT:
+        return True, f"upside branch, {up}% in band"
+    rng = facts.get("pct_of_52wk_range")
+    if up >= 0 and rng is not None and rng >= MOMENTUM_RANGE_PCT:
+        return True, f"momentum branch, upside {up}% at {rng}% of 52wk range"
+    return False, (f"upside {up}% under {MIN_UPSIDE_PCT:.0f}% and not near 52wk highs "
+                   f"({rng}% of range)")
 
 
 def closing_note(now):
@@ -135,13 +160,14 @@ def main():
             packs = facts.fetch([s["ticker"] for s in candidates])
             for s in candidates:
                 s["facts"] = packs.get(s["ticker"], {})
-            # upside gate: no measurable analyst upside -> not worth risk-weighing at all
-            finalists = [s for s in candidates
-                         if s["facts"].get("target_upside_pct", -999) >= MIN_UPSIDE_PCT]
-            if len(finalists) < len(candidates):
-                log.info("upside gate: dropped %s (target upside < %.0f%% or no target)",
-                         [s["ticker"] for s in candidates if s not in finalists],
-                         MIN_UPSIDE_PCT)
+            # upside gate: believable analyst upside, not merely some — see upside_gate()
+            finalists = []
+            for s in candidates:
+                passed, why = upside_gate(s["facts"])
+                log.info("upside gate: %s %s (%s)",
+                         "passed" if passed else "dropped", s["ticker"], why)
+                if passed:
+                    finalists.append(s)
             candidates = finalists
 
         if candidates and mode == "alert":
@@ -216,6 +242,21 @@ def _selfcheck():
     finally:
         STATE = orig
     print("state self-check ok")
+
+    # the falling-knife problem: stale targets read as huge upside and momentum
+    # names near their highs read as none, so both directions need checking
+    assert upside_gate({"target_upside_pct": 18.0})[0]                    # ordinary upside
+    assert upside_gate({"target_upside_pct": 40.0})[0]                    # top of the band
+    assert not upside_gate({"target_upside_pct": 55.0})[0]                # nobody cut the target
+    assert "stale-target" in upside_gate({"target_upside_pct": 55.0})[1]
+    assert not upside_gate({})[0]                                         # no target at all
+    # momentum branch: a small target is fine near the highs, below price never is
+    assert upside_gate({"target_upside_pct": 2.0, "pct_of_52wk_range": 95})[0]
+    assert not upside_gate({"target_upside_pct": 2.0, "pct_of_52wk_range": 40})[0]
+    assert not upside_gate({"target_upside_pct": -3.0, "pct_of_52wk_range": 95})[0]
+    # a suspect target is dropped even at the highs — 55% upside is the stale signal
+    assert not upside_gate({"target_upside_pct": 55.0, "pct_of_52wk_range": 95})[0]
+    print("upside-gate self-check ok")
 
 
 if __name__ == "__main__":
