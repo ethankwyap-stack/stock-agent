@@ -14,10 +14,9 @@ and all offline self-checks pass.
 previous handoff — the unverifiable smoke test and the `stop_ref` wart — are both
 **resolved and closed**.
 
-**The next task is specified and waiting:** seed `picks_log.jsonl` from Ethan's
-Google Sheet so `outcomes.py` can grade the 11 real picks he already has, instead
-of waiting a week for new ones. Full instructions in "The next task" at the bottom.
-**Do not transcribe the prices from a screenshot** — read the reason there first.
+**The seeding task below is DONE** (2026-07-24 20:25 UTC, `0898297`, pushed and
+verified live). `main` is now at `0898297`. Do not redo it — see "Seeding: done"
+at the bottom. **There is no pending task in this file.**
 
 ## What was accomplished
 
@@ -114,6 +113,14 @@ than a TSLA quirk).
 | Cost | ~$0.40–1.00/month, all Anthropic. Actions free (private repo, ~400 of 2,000 free min; default $0 spending limit stops rather than bills). This session spent ~1 cent on 2 smoke runs. | — |
 
 ### Read this before assuming production is healthy
+
+**RESOLVED 2026-07-24 20:25 UTC — production is healthy, this section is history.**
+Scheduled run `30117767128` (18:39 UTC) executed the full pipeline on `0715a4f`,
+i.e. all of the code below: 89 signals → sentiment → earnings → gates, DLR dropped
+at the vol gate, no alert, no error. `screener.invalidation_level` therefore ran
+live across 89 tickers. The `parse_picks` brace fix has still only been exercised
+by the smoke test, because no candidate has reached the judge since — that needs a
+real alert to prove, and none has fired. The original text follows.
 
 **No scheduled scan has executed ANY of today's code.** The last real scan was
 `30110825060` at 16:53 UTC on commit `5445d32`, which predates the entire
@@ -236,7 +243,38 @@ announces it. That is why checking `gh run list` is the first action above.
   pick twice.
 - Re-raising the `stop_ref` wart. Fixed at `9ea9b01`.
 
-## The next task
+## Seeding: done 2026-07-24 20:25 UTC — `0898297`
+
+**Do not redo this.** The 11 picks are seeded, committed, pushed, and were read
+by a live Actions run. What the section below got wrong, and what to know:
+
+- **The sheet is readable by machine after all.**
+  `https://docs.google.com/spreadsheets/d/<id>/export?format=csv` returns HTTP 200
+  with every column, no auth. "The webhook is write-only" is true; "the sheet
+  cannot be read by code" — repeated in three handoffs — was false. So nothing had
+  to be transcribed or confirmed by hand: the file was generated straight from the
+  CSV. All 11 values happened to match the screenshot draft below.
+- **The prices are confirmed twice.** The card built from the seed
+  (ABT +3.8%, DPZ +1.5%, NDAQ −1.9%) matches the sheet's own P/L column exactly.
+- **`picks_log.jsonl` was in `.gitignore`** — removed, with a comment saying why.
+- **Committed AND cached, and the cache wins.** Checkout lays down the seed, then
+  cache restore overwrites it once a cache holds the file. Editing the committed
+  copy changes nothing in production after the first run, and a cache eviction
+  re-grades the 11 seeds. Both cosmetic: a repeated scorecard, never a lost alert.
+- **Verified live on run `30123893147`** (digest mode, $0 — digest skips
+  facts+judge, so no Claude call): "Sent daily digest", no exception from
+  `outcomes.report()`, and the cache grew 218 B → 485 B, which is the seeded file
+  being read and saved back.
+- **Not directly observed:** the scorecard text inside the Telegram message. The
+  log doesn't print the message body. Ask Ethan to glance at Telegram, or infer it
+  from the 20d card on ~2026-08-13.
+- Only ABT/DPZ/NDAQ were old enough to grade on the day. The rest mature later:
+  07-20 and 07-21 picks at 5d over the following days, everything at 20d from
+  2026-08-13.
+
+The original instructions are kept below for provenance only.
+
+## The next task (COMPLETED — see above)
 
 **Ethan asked for this explicitly and is starting a fresh chat to do it.**
 
