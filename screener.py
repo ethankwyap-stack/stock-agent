@@ -27,6 +27,19 @@ def sp500_tickers():
         return FALLBACK
 
 
+def invalidation_level(price, prior_low):
+    """The level that says the setup failed — the prior 20-day closing low, but
+    never at or above the current price.
+
+    An oversold name is often making a NEW 20-day low, which is the signal firing
+    as designed; its *prior* low then sits above where the stock trades now. Live
+    on 2026-07-24, TSLA would have alerted "Invalid below: $319.69" against a
+    309.22 close — a level already breached before the message arrived. The 3%
+    floor keeps it a real exit instead of an instant stop-out.
+    """
+    return round(min(prior_low, price * 0.97), 2)
+
+
 def rsi(closes, period=14):
     delta = closes.diff()
     gain = delta.clip(lower=0).rolling(period).mean()
@@ -62,11 +75,11 @@ def scan(tickers=None):
         elif r >= 70:
             sig["rsi_overbought"] = True
         if sig:
-            sig.update(ticker=t, price=round(float(close.iloc[-1]), 2),
+            price = round(float(close.iloc[-1]), 2)
+            sig.update(ticker=t, price=price,
                        rsi=round(r, 1), volume_ratio=round(vol_ratio, 1),
-                       # the prior 20-day closing low: the level that says the
-                       # setup failed, so every alert can carry an exit condition
-                       stop_ref=round(float(close.iloc[-21:-1].min()), 2),
+                       stop_ref=invalidation_level(
+                           price, float(close.iloc[-21:-1].min())),
                        volatility_30d_annualized_pct=round(
                            float(close.pct_change().tail(30).std()) * 252 ** 0.5 * 100, 1))
             signals.append(sig)
@@ -74,6 +87,15 @@ def scan(tickers=None):
 
 
 if __name__ == "__main__":
+    # self-check: a normal setup keeps its prior 20-day low as the exit level
+    assert invalidation_level(100.0, 94.0) == 94.0
+    # but a stock making a NEW 20-day low never gets a level above where it trades
+    # (the live TSLA case: prior low 319.69, close 309.22)
+    assert invalidation_level(309.22, 319.69) == 299.94
+    # equal is still below-only: a level at the current price is an instant stop-out
+    assert invalidation_level(50.0, 50.0) == 48.5
+    print("invalidation self-check ok")
+
     # self-check: RSI of a monotonically rising series must be 100
     up = pd.Series(range(1, 31), dtype=float)
     assert round(rsi(up).iloc[-1]) == 100
