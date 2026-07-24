@@ -16,6 +16,7 @@ RESEND_JUMP = 2.0    # re-alert a ticker the same day only if its score rose by 
 MIN_UPSIDE_PCT = 10.0      # ordinary candidates need this much analyst-target upside
 MAX_UPSIDE_PCT = 40.0      # more than this reads as a target nobody cut, not real upside
 MOMENTUM_RANGE_PCT = 80.0  # at/near 52wk highs, "analysts aren't below price" is upside enough
+VOL_UPSIDE_MULT = 4.0      # drop a candidate whose 30d volatility exceeds this many x its upside
 # Sentiment and earnings are the slow lookups (earnings alone was 6min of a 9min
 # run), so they cover the strongest technical names only — ranked by score, never
 # alphabetically. An alphabetical cut handed the sentiment bonus, the single
@@ -82,6 +83,24 @@ def upside_gate(facts) -> tuple[bool, str]:
         return True, f"momentum branch, upside {up}% at {rng}% of 52wk range"
     return False, (f"upside {up}% under {MIN_UPSIDE_PCT:.0f}% and not near 52wk highs "
                    f"({rng}% of range)")
+
+
+def vol_gate(signal) -> tuple[bool, str]:
+    """Is the payoff worth this much noise? -> (passed, reason).
+
+    30d volatility was computed and handed to the judge, but nothing gated on it,
+    so Claude burned calls on setups where the noise dwarfed the move being argued
+    for. The max(..., 5) floor stops momentum-branch names — whose upside number is
+    small by design — from being auto-killed by their own tiny target.
+    """
+    vol = signal.get("volatility_30d_annualized_pct")
+    if vol is None:
+        return True, "no volatility reading"  # missing data is not evidence against
+    up = signal.get("facts", {}).get("target_upside_pct", 0.0)
+    ceiling = VOL_UPSIDE_MULT * max(up, 5.0)
+    if vol > ceiling:
+        return False, f"vol {vol}% vs upside {up}%, ceiling {ceiling:.0f}%"
+    return True, f"vol {vol}% within ceiling {ceiling:.0f}%"
 
 
 def closing_note(now):
@@ -171,6 +190,16 @@ def main():
                     finalists.append(s)
             candidates = finalists
 
+            # vol gate: noise that dwarfs the payoff isn't worth a judge call
+            survivors = []
+            for s in candidates:
+                passed, why = vol_gate(s)
+                if passed:
+                    survivors.append(s)
+                else:
+                    log.info("vol gate: dropped %s — %s", s["ticker"], why)
+            candidates = survivors
+
         if candidates and mode == "alert":
             picks = analyzer.judge(candidates)
             if picks:
@@ -258,6 +287,21 @@ def _selfcheck():
     # a suspect target is dropped even at the highs — 55% upside is the stale signal
     assert not upside_gate({"target_upside_pct": 55.0, "pct_of_52wk_range": 95})[0]
     print("upside-gate self-check ok")
+
+    # vol gate: noise must not dwarf the payoff, but a deliberately small
+    # momentum-branch target must not auto-kill a fine candidate either
+    assert vol_gate({"volatility_30d_annualized_pct": 30.0,
+                     "facts": {"target_upside_pct": 12.0}})[0]         # 30 <= 4*12
+    assert not vol_gate({"volatility_30d_annualized_pct": 60.0,
+                         "facts": {"target_upside_pct": 12.0}})[0]     # 60 > 48
+    # the floor: 2% upside is judged against 4*5=20, not 4*2=8
+    assert vol_gate({"volatility_30d_annualized_pct": 19.0,
+                     "facts": {"target_upside_pct": 2.0}})[0]
+    assert not vol_gate({"volatility_30d_annualized_pct": 21.0,
+                         "facts": {"target_upside_pct": 2.0}})[0]
+    # a missing reading must not silently drop a candidate
+    assert vol_gate({"facts": {"target_upside_pct": 12.0}})[0]
+    print("vol-gate self-check ok")
 
 
 if __name__ == "__main__":
