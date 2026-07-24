@@ -66,6 +66,12 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
   `_close_open_brackets()` retries with the unclosed brackets appended. It
   deliberately refuses to repair a reply with an **unterminated string** — that
   one died mid-sentence, and half an alert is worse than none.
+- **`stop_ref` must never sit at or above the current price.** It starts as the
+  prior 20-day closing low, but an oversold candidate is usually making a *new*
+  20-day low, so the raw figure lands above where the stock trades and the alert
+  states an already-breached level. `screener.invalidation_level()` caps it 3%
+  under price — keep every new alert field that derives from past bars honest
+  against the current one.
 - **`judge_smoke.py` exits non-zero on a bad judgment**, so the workflow step
   fails loudly. It sends two candidates in one call — JNJ must be accepted, AAPL
   must be rejected — and prints the raw reply and `stop_reason` every time, which

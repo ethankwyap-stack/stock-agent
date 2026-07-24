@@ -18,6 +18,7 @@ pass. Nothing is half-done.
 |---|---|
 | `39fed24` | `judge_smoke.py` rewritten to be capable of failing. Two candidates in one call instead of one; prints the raw reply and `stop_reason` unconditionally; exits non-zero on a bad outcome. `analyzer.judge()` stashes `LAST_REPLY` / `LAST_STOP_REASON` on module globals — no caller changed. |
 | `b6cfa80` | `parse_picks` now recovers a reply whose closing brackets are missing. New `_close_open_brackets()` helper. Self-checks updated + 3 new cases. |
+| `9ea9b01` | `stop_ref` can no longer land at or above the current price. New `screener.invalidation_level(price, prior_low)` caps it 3% under price, applied at the single site in `scan()`. Verified against live prices. |
 
 ### The bug the test found (this is the important part)
 
@@ -62,10 +63,11 @@ Checked by running a command at ~17:50 UTC on 2026-07-24, not remembered.
 
 | Thing | Value |
 |---|---|
-| Branch / local HEAD | `main` / `b6cfa80` |
+| Branch / local HEAD | `main` / `9ea9b01` (+ a docs commit) |
 | Remote `main` | in sync, pushed |
 | Working tree | clean except the 2 deliberately-untracked plan `.md` files |
-| Offline checks | all 4 pass at `b6cfa80` |
+| Offline checks | all 4 pass at `9ea9b01`, incl. the new invalidation asserts |
+| Invalidation fix | verified on live prices: TSLA 309.64 → 300.35 (was 319.69); JNJ/NVDA/PFE unchanged |
 | Last smoke run | `30114251411`, **success** — 1 pick, JNJ accepted, AAPL rejected, `Invalid below: $143.50` present |
 | Previous smoke run | `30113702531`, **failed as designed**, exposed the brace bug |
 | Cost this session | 2 smoke runs ≈ 1 cent total, all Anthropic. Actions free. |
@@ -77,14 +79,11 @@ now pins that exact shape. Nothing else is unverified.
 
 ## Still open — ASK ETHAN, DO NOT GUESS
 
-1. **The `stop_ref` wart, still unanswered from last session.** `stop_ref` is the
-   *prior* 20-day closing low, so for an oversold stock making a new low it lands
-   **above** the current price. Seen live: TSLA `stop_ref` 319.69 against a 309.22
-   close — the alert would say "Invalid below: $319.69" about a stock already
-   below it. Fix would be roughly `min(stop_ref, price * 0.97)`. He has been asked
-   twice and has not answered.
-2. **The orphaned Actions caches** from adding `picks_log.jsonl` to `path:`.
+1. **The orphaned Actions caches** from adding `picks_log.jsonl` to `path:`.
    Self-healing and almost certainly needs nothing; he was told and did not reply.
+
+(The `stop_ref` wart that sat here unanswered for two sessions is **fixed** — see
+`9ea9b01` below.)
 
 ## Gotchas
 
@@ -123,13 +122,13 @@ now pins that exact shape. Nothing else is unverified.
 
 ## Suggested next steps
 
-Nothing is blocking. In rough priority order:
+Nothing is blocking, and there is no known defect outstanding.
 
-1. Get an answer on the `stop_ref` wart and fix it — it is the only known defect
-   that would put a wrong number in a real alert.
-2. Let real alerts accumulate in `picks_log.jsonl` for a week, then check that the
+1. Let real alerts accumulate in `picks_log.jsonl` for a week, then check that the
    `outcomes.py` scorecard actually appears in a post-close digest. It has been
    verified against live prices but never seen end-to-end in a digest.
+2. Watch the first real oversold alert to confirm its `Invalid below:` level reads
+   sensibly in Telegram. The arithmetic is verified; the rendered message is not.
 
 ## How to work with Ethan
 
