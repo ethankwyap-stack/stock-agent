@@ -112,7 +112,7 @@ def closing_note(now):
 
 def main():
     now = datetime.now(ZoneInfo("America/New_York"))
-    import screener, sentiment, earnings, facts, analyzer, notify, tracker
+    import screener, sentiment, earnings, facts, analyzer, notify, tracker, outcomes
 
     state = load_state()
     today = now.date().isoformat()
@@ -226,10 +226,20 @@ def main():
                     ("earnings", "earnings" in s)] if on)
             body = "\n".join(f"{s['ticker']} — score {s['score']} ({_names(s)})"
                              for s in ranked[:3])
-            notify.send("Daily digest — nothing crossed the alert bar today. "
-                        "Top signals seen:\n" + body)
+            msg = ("Daily digest — nothing crossed the alert bar today. "
+                   "Top signals seen:\n" + body)
         else:
-            notify.send("Daily digest — quiet day, no tickers tripped any screens.")
+            msg = "Daily digest — quiet day, no tickers tripped any screens."
+        # Scorecard on post-close runs only: a 3pm digest would grade past picks
+        # against a price that is still moving.
+        if mode == "digest":
+            try:
+                card = outcomes.report()
+                if card:
+                    msg += "\n\n" + card
+            except Exception:
+                log.exception("outcomes report failed, sending digest without it")
+        notify.send(msg)
         state["last_alert"] = today
         log.info("Sent daily digest.")
 

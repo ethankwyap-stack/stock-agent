@@ -38,7 +38,9 @@ jobs:
       # so each run saves under a fresh key and restores the newest "state-" match).
       - uses: actions/cache/restore@v5
         with:
-          path: state.json
+          path: |
+            state.json
+            picks_log.jsonl
           key: state-${{ github.run_id }}
           restore-keys: state-
       - if: ${{ inputs.test }}
@@ -73,5 +75,7 @@ jobs:
         if: always()
         continue-on-error: true
         with:
-          path: state.json
+          path: |
+            state.json
+            picks_log.jsonl
           key: state-${{ github.run_id }}

@@ -1,4 +1,5 @@
 state.json
+picks_log.jsonl
 __pycache__/
 .env
 .venv/

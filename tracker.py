@@ -6,11 +6,16 @@ import os
 import requests
 import yfinance as yf
 
+import outcomes
+
 log = logging.getLogger("stock-agent")
 
 
 def log_picks(picks, candidates):
     """POST one row per pick. Never raises — tracking must not break alerting."""
+    # Local grading history first: the sheet webhook is write-only, and this must
+    # be recorded even when SHEET_WEBHOOK_URL isn't set at all.
+    outcomes.record(picks, candidates)
     url = os.environ.get("SHEET_WEBHOOK_URL")
     if not url:
         return

@@ -20,6 +20,7 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
 - `facts.py` — fact pack (analyst target, 52wk position, P/E, beta) for finalists only.
 - `analyzer.py` — `rank()` composite score, `judge()` the Claude call, `parse_picks()`.
 - `notify.py` — Telegram send. `tracker.py` — appends picks to the Google Sheet.
+- `outcomes.py` — grades past picks at 5d/20d from `picks_log.jsonl`, into the digest.
 - `sheet_webhook.gs` — Apps Script source for that sheet (deployed separately).
 
 ## Local run
@@ -62,6 +63,10 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
 - **Yahoo's OpenWeb comments endpoint 403s since Jul 2026** — sentiment is
   headlines only and `mentions` is always 0. If sentiment logs 0 tickers,
   suspect yfinance `.info`/news, and note `sentiment.py` swallows per-ticker errors.
+- **The sheet webhook is write-only** — `sheet_webhook.gs` defines `doPost` and no
+  `doGet`, so pick history cannot be read back out of the sheet. That is why
+  `outcomes.py` keeps its own `picks_log.jsonl`, which rides the same Actions
+  cache as `state.json`; eviction costs one scorecard and never an alert.
 - **`state.json` lives in the Actions cache**, not the repo. Cache keys are
   immutable: save under `state-${{ github.run_id }}`, restore by prefix `state-`.
   Eviction just resets alert memory — harmless.
