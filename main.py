@@ -9,7 +9,8 @@ from zoneinfo import ZoneInfo
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("stock-agent")
 
-MIN_SCORE = 3.0      # ponytail: one weak signal alone never pages you; tune if too quiet/noisy
+MIN_SCORE = 2.5      # volume+RSI-oversold (3.0) passes, a lone breakout (2.0) does not.
+                     # Was 3.0 until earnings stopped paying 2.0; same selectivity, lower ceiling.
 MIN_FAMILIES = 2     # signal families (volume/breakout/RSI/earnings) required before Claude even sees it
 RESEND_JUMP = 2.0    # re-alert a ticker the same day only if its score rose by this much
 MIN_UPSIDE_PCT = 10.0      # ordinary candidates need this much analyst-target upside

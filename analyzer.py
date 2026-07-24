@@ -11,7 +11,9 @@ SYSTEM = (
     "For EACH candidate, first build the strongest bear case from the actual "
     "numbers: overextension near 52-week highs, rich valuation, earnings gap risk "
     "vs its historical move, volatility that dwarfs the upside, sentiment froth "
-    "chasing a move already made. Then include the ticker ONLY if its concrete "
+    "chasing a move already made. Upcoming earnings are event risk to weigh "
+    "against the setup, not a bonus — compare the historical post-earnings move "
+    "to the claimed upside. Then include the ticker ONLY if its concrete "
     "upside clearly outweighs that bear case — reject on any doubt; an empty picks "
     "list is a good outcome. Respond with ONLY this JSON, no other text: "
     '{"picks": [{"ticker": "XYZ", "line": "XYZ $price — setup and upside\\n'
@@ -46,7 +48,9 @@ def rank(signals, sentiment, earnings):
             score += max(-3, min(3, sent["sentiment"])) * 0.5
             s["yahoo_sentiment"] = sent
         if t in earnings:
-            score += 2.0
+            # No score bonus: the judge prompt treats an upcoming report as event
+            # risk, so paying +2.0 for it here had the scorer and the judge
+            # disagreeing. Still attached, and still a signal family.
             s["earnings"] = earnings[t]
         s["score"] = round(score, 1)
     return sorted(signals, key=lambda s: s["score"], reverse=True)
@@ -92,7 +96,8 @@ if __name__ == "__main__":
             {"ticker": "BBB", "unusual_volume": True, "breakout_20d": True}]
     ranked = rank(sigs, {"BBB": {"mentions": 3, "sentiment": 2}},
                   {"BBB": {"earnings_date": "2026-07-14", "avg_post_earnings_move_pct": 5.0}})
-    assert ranked[0]["ticker"] == "BBB" and ranked[0]["score"] == 8.5
+    # 2.0 volume + 2.0 breakout + 1.5 mentions + 1.0 tone; earnings adds nothing
+    assert ranked[0]["ticker"] == "BBB" and ranked[0]["score"] == 6.5, ranked[0]
     assert ranked[1]["score"] == 1.0
     # confluence: BBB fired volume+breakout+earnings = 3 families, AAA only RSI = 1
     assert signal_types(ranked[0]) == 3 and signal_types(ranked[1]) == 1

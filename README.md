@@ -21,7 +21,7 @@ main.py      -> orchestrates; gates candidates, remembers what it already sent
 
 Gates a ticker must clear, in order:
 
-1. Score >= 3 AND at least 2 independent signal families
+1. Score >= 2.5 AND at least 2 independent signal families
    (volume / breakout / RSI / earnings).
 2. Not already alerted today, unless its score jumped by 2+.
 3. Analyst mean price target at least 10% above current price
@@ -92,7 +92,7 @@ python main.py --selfcheck   # market hours, end-of-day message, state loading
 
 ## Tuning
 
-- `MIN_SCORE` in `main.py` (default 3.0) — raise it if you get too many alerts.
+- `MIN_SCORE` in `main.py` (default 2.5) — raise it if you get too many alerts.
 - `MIN_FAMILIES` in `main.py` (default 2) — signal families required before
   Claude even sees a ticker; set to 1 to loosen, 3 to only hear about monsters.
 - `RESEND_JUMP` in `main.py` (default 2.0) — same-day re-alerts need this much
