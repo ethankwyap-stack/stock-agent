@@ -14,7 +14,10 @@ MIN_SCORE = 2.5      # volume+RSI-oversold (3.0) passes, a lone breakout (2.0) d
 MIN_FAMILIES = 2     # signal families (volume/breakout/RSI/earnings) required before Claude even sees it
 RESEND_JUMP = 2.0    # re-alert a ticker the same day only if its score rose by this much
 MIN_UPSIDE_PCT = 10.0      # ordinary candidates need this much analyst-target upside
-MAX_UPSIDE_PCT = 40.0      # more than this reads as a target nobody cut, not real upside
+MAX_UPSIDE_PCT = 55.0      # more than this reads as a target nobody cut, not real upside
+# was 40 until it dropped GLW (75%), VRT (67%), BSX (55%) as "stale-target
+# suspect" — real high-beta upside, not just an uncut target. 55 keeps GLW/VRT
+# out (still the likeliest stale-target shape) while letting BSX-range names in.
 MOMENTUM_RANGE_PCT = 80.0  # at/near 52wk highs, "analysts aren't below price" is upside enough
 VOL_UPSIDE_MULT = 4.0      # drop a candidate whose 30d volatility exceeds this many x its upside
 # ponytail: a momentum candidate's thesis is "near its highs," not "N% upside" —
@@ -301,16 +304,16 @@ def _selfcheck():
     # the falling-knife problem: stale targets read as huge upside and momentum
     # names near their highs read as none, so both directions need checking
     assert upside_gate({"target_upside_pct": 18.0})[0]                    # ordinary upside
-    assert upside_gate({"target_upside_pct": 40.0})[0]                    # top of the band
-    assert not upside_gate({"target_upside_pct": 55.0})[0]                # nobody cut the target
-    assert "stale-target" in upside_gate({"target_upside_pct": 55.0})[1]
+    assert upside_gate({"target_upside_pct": 55.0})[0]                    # top of the band
+    assert not upside_gate({"target_upside_pct": 70.0})[0]                # nobody cut the target
+    assert "stale-target" in upside_gate({"target_upside_pct": 70.0})[1]
     assert not upside_gate({})[0]                                         # no target at all
     # momentum branch: a small target is fine near the highs, below price never is
     assert upside_gate({"target_upside_pct": 2.0, "pct_of_52wk_range": 95})[0]
     assert not upside_gate({"target_upside_pct": 2.0, "pct_of_52wk_range": 40})[0]
     assert not upside_gate({"target_upside_pct": -3.0, "pct_of_52wk_range": 95})[0]
-    # a suspect target is dropped even at the highs — 55% upside is the stale signal
-    assert not upside_gate({"target_upside_pct": 55.0, "pct_of_52wk_range": 95})[0]
+    # a suspect target is dropped even at the highs — 70% upside is the stale signal
+    assert not upside_gate({"target_upside_pct": 70.0, "pct_of_52wk_range": 95})[0]
     print("upside-gate self-check ok")
 
     # vol gate: noise must not dwarf the payoff, but a deliberately small
