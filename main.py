@@ -17,6 +17,12 @@ MIN_UPSIDE_PCT = 10.0      # ordinary candidates need this much analyst-target u
 MAX_UPSIDE_PCT = 40.0      # more than this reads as a target nobody cut, not real upside
 MOMENTUM_RANGE_PCT = 80.0  # at/near 52wk highs, "analysts aren't below price" is upside enough
 VOL_UPSIDE_MULT = 4.0      # drop a candidate whose 30d volatility exceeds this many x its upside
+# ponytail: a momentum candidate's thesis is "near its highs," not "N% upside" —
+# grading its noise against its own tiny target gave every one a flat ~20%
+# ceiling and killed ABBV/GD/EG/AON/BALL on repeat (Jul 27-30 2026 live runs).
+# 40% is a starting point (typical S&P names run 20-35%); revisit with real data.
+MOMENTUM_VOL_CEILING = 40.0
+VOL_GATE_MIN_CANDIDATES = 3  # tiebreaker among several, not a floor that empties a lone survivor
 # Sentiment and earnings are the slow lookups (earnings alone was 6min of a 9min
 # run), so they cover the strongest technical names only — ranked by score, never
 # alphabetically. An alphabetical cut handed the sentiment score to A-tickers and
@@ -97,8 +103,11 @@ def vol_gate(signal) -> tuple[bool, str]:
     vol = signal.get("volatility_30d_annualized_pct")
     if vol is None:
         return True, "no volatility reading"  # missing data is not evidence against
-    up = signal.get("facts", {}).get("target_upside_pct", 0.0)
-    ceiling = VOL_UPSIDE_MULT * max(up, 5.0)
+    facts = signal.get("facts", {})
+    up = facts.get("target_upside_pct", 0.0)
+    rng = facts.get("pct_of_52wk_range")
+    is_momentum = up < MIN_UPSIDE_PCT and rng is not None and rng >= MOMENTUM_RANGE_PCT
+    ceiling = MOMENTUM_VOL_CEILING if is_momentum else VOL_UPSIDE_MULT * max(up, 5.0)
     if vol > ceiling:
         return False, f"vol {vol}% vs upside {up}%, ceiling {ceiling:.0f}%"
     return True, f"vol {vol}% within ceiling {ceiling:.0f}%"
@@ -191,15 +200,20 @@ def main():
                     finalists.append(s)
             candidates = finalists
 
-            # vol gate: noise that dwarfs the payoff isn't worth a judge call
-            survivors = []
-            for s in candidates:
-                passed, why = vol_gate(s)
-                if passed:
-                    survivors.append(s)
-                else:
-                    log.info("vol gate: dropped %s — %s", s["ticker"], why)
-            candidates = survivors
+            # vol gate: a tiebreaker among several candidates, not a floor —
+            # dropping the only survivor buys nothing but a quieter run
+            if len(candidates) >= VOL_GATE_MIN_CANDIDATES:
+                survivors = []
+                for s in candidates:
+                    passed, why = vol_gate(s)
+                    if passed:
+                        survivors.append(s)
+                    else:
+                        log.info("vol gate: dropped %s — %s", s["ticker"], why)
+                candidates = survivors
+            else:
+                log.info("vol gate: skipped, only %d candidate(s) survived upside gate",
+                          len(candidates))
 
         if candidates and mode == "alert":
             picks = analyzer.judge(candidates)
@@ -312,6 +326,15 @@ def _selfcheck():
                          "facts": {"target_upside_pct": 2.0}})[0]
     # a missing reading must not silently drop a candidate
     assert vol_gate({"facts": {"target_upside_pct": 12.0}})[0]
+    # momentum names are graded against a flat ceiling, not their own tiny target —
+    # the old 4*max(up,5) rule gave ABBV-like names (upside ~1-3%) a ~20% ceiling
+    assert vol_gate({"volatility_30d_annualized_pct": 34.6,
+                     "facts": {"target_upside_pct": 1.0, "pct_of_52wk_range": 95.0}})[0]
+    assert not vol_gate({"volatility_30d_annualized_pct": 45.0,
+                         "facts": {"target_upside_pct": 1.0, "pct_of_52wk_range": 95.0}})[0]
+    # not near the highs -> not momentum -> still graded against its own upside
+    assert not vol_gate({"volatility_30d_annualized_pct": 34.6,
+                         "facts": {"target_upside_pct": 1.0, "pct_of_52wk_range": 40.0}})[0]
     print("vol-gate self-check ok")
 
 
