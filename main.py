@@ -232,6 +232,7 @@ def main():
             else:
                 log.info("Claude judged none of %d candidates actionable — staying quiet.",
                          len(candidates))
+                log.info("Claude reply: %s", analyzer.LAST_REPLY[:500])
 
     # digest: the 3pm run if one lands, otherwise the first run after the close.
     # Two triggers, not one, because the cron can't be relied on to hit either.
