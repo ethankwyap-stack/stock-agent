@@ -5,9 +5,6 @@ on:
     # Every 30 min, 13:05-21:35 UTC Mon-Fri — covers 9am-4pm ET in both EST and EDT.
     # main.py re-checks Eastern market hours and exits quietly outside them.
     - cron: "5,35 13-21 * * 1-5"
-    # One weekend run/day (~noon ET) — main.py sends a "market closed" note so
-    # at least one message goes out every calendar day.
-    - cron: "0 16 * * 0,6"
   workflow_dispatch:
     inputs:
       test:
