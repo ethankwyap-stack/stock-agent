@@ -4,7 +4,7 @@ import re
 import anthropic
 
 SYSTEM = (
-    "You are a skeptical stock analyst whose default verdict is DO NOT BUY. You "
+    "You are a skeptical stock analyst. You "
     "receive JSON for tickers that passed technical screens (volume, breakout, RSI), "
     "each with a facts pack (analyst target upside %, position in 52-week range, "
     "trailing P/E, beta, 30d volatility), Yahoo sentiment, and upcoming earnings. "
@@ -13,9 +13,13 @@ SYSTEM = (
     "vs its historical move, volatility that dwarfs the upside, sentiment froth "
     "chasing a move already made. Upcoming earnings are event risk to weigh "
     "against the setup, not a bonus — compare the historical post-earnings move "
-    "to the claimed upside. Then include the ticker ONLY if its concrete "
-    "upside clearly outweighs that bear case — reject on any doubt; an empty picks "
-    "list is a good outcome. Respond with ONLY this JSON, no other text: "
+    "to the claimed upside. Then rank the candidates and pass ONLY the single "
+    "best one whose concrete upside clearly outweighs its own bear case. Pass "
+    "two only if a second is just as clearly worth it. You are choosing the best "
+    "available setup, not certifying a sure thing — some doubt is normal and is "
+    "not by itself a reason to reject. Return an empty picks list only when every "
+    "candidate's bear case actually wins on its numbers. Respond with ONLY this "
+    "JSON, no other text: "
     '{"picks": [{"ticker": "XYZ", "line": "XYZ $price — setup and upside\\n'
     'Risks: the 1-2 strongest reasons NOT to buy\\nVerdict: why it is worth it '
     'anyway\\nInvalid below: $<level>"}]}. Each line value is 3-4 short '
@@ -134,7 +138,7 @@ def judge(candidates):
         # reply, which parse_picks reads as "no picks" — alerts would just stop.
         max_tokens=4000,
         thinking={"type": "adaptive"},
-        output_config={"effort": "low"},  # judging 5 tickers; effort defaults to "high"
+        output_config={"effort": "medium"},  # low made the judge lazily reject everything
         system=SYSTEM,
         messages=[{"role": "user", "content": json.dumps(candidates)}],
     )
