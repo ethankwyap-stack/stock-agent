@@ -57,6 +57,13 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
 - **Sonnet 5 thinks by default.** Omitting `thinking` enables adaptive thinking
   (4.6 did not), so `max_tokens` must cover thinking + the JSON. A truncated
   reply parses as "no picks" and silently stops alerts — it does not error.
+- **The judge prompt is the real alert valve, not the gates.** Aug 2026: 60 runs,
+  15 reached the judge, 0 picks in six weeks. The gates were fine — the prompt
+  said "default verdict DO NOT BUY" and "reject on any doubt", so it always
+  rejected, and `effort: "low"` made it lazier still. Rewritten Sep 1 2026 as
+  choose-the-best-of-N with effort `medium`. If alerts ever go quiet for weeks
+  again, read the `judged none of N` lines first: candidates reaching the judge
+  means the screens work and the prompt is the wall.
 - **`parse_picks` must stay tolerant.** It regex-extracts `{...}` from anywhere
   in the reply and never raises; a bad reply means no picks, not a dead run.
   Do not "tighten" it back to a strict `json.loads`.
