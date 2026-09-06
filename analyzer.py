@@ -27,7 +27,7 @@ SYSTEM = (
     "strongest pick first, no financial-advice disclaimers. The final line must "
     "always be the invalidation level — the candidate's stop_ref, or a tighter "
     "level if its own numbers justify one — so every alert states what would "
-    "prove the setup wrong."
+    "prove the setup wrong. Output the JSON object and nothing else: no prose, no code fences, no keys beyond \"ticker\" and \"line\", no ticker that was not in the candidates I sent. Use {\"picks\": []} when nothing qualifies."
 )
 
 
@@ -93,30 +93,115 @@ def _close_open_brackets(s):
     return s if in_str else s + "".join(reversed(stack))
 
 
-def parse_picks(text, valid):
-    """Pull the picks out of Claude's reply. Never raises — bad reply means no picks.
+MAX_PICKS = 3
+MAX_LINE_CHARS = 480
+PICK_KEYS = {"ticker", "line"}
 
-    Claude sometimes wraps the JSON in prose or code fences, drops a closing brace,
-    or just says in plain English that nothing qualifies; a quiet run beats a crashed
-    one either way. Two attempts: the greedy `{...}` match, then the same text with
-    unclosed brackets repaired.
+# The judge's output contract. Documented here, demanded by SYSTEM, and enforced by
+# validate_picks(); all three must be changed together.
+#
+#   {"picks": [ {"ticker": "<one of the candidate tickers>",
+#                "line":   "<3-4 plain-text lines joined by \\n, <=480 chars,
+#                            last line 'Invalid below: $<level>'>"} ]}
+#
+# picks is required and may be empty (a legitimate "nothing qualifies"), at most
+# MAX_PICKS entries, no duplicate tickers, no keys beyond PICK_KEYS. Anything else
+# is a JudgeFormatError, never a silent zero-pick run.
+SCHEMA_REMINDER = (
+    'Your previous reply did not match the required schema: {reason}\n'
+    'Reply again with ONLY this JSON and nothing else — no prose, no code fences:\n'
+    '{{"picks": [{{"ticker": "XYZ", "line": "XYZ $price — setup and upside\\n'
+    'Risks: ...\\nVerdict: ...\\nInvalid below: $<level>"}}]}}\n'
+    'Use "picks": [] if no candidate qualifies. Only tickers from the candidates '
+    'I sent. Each line must be under 480 characters and must end with the '
+    '"Invalid below: $<level>" line.'
+)
+
+
+class JudgeFormatError(ValueError):
+    """Claude's reply did not match the pick schema. Never swallow this quietly."""
+
+
+def _extract_json(text):
+    """Best-effort recovery of the JSON object from a reply. Returns a dict or None.
+
+    Extraction is allowed to be forgiving — prose, code fences and a missing
+    closing brace are model quirks, not schema violations. Two attempts: the
+    greedy `{...}` match, then the same text with unclosed brackets repaired.
+    What the object *contains* is judged strictly, by validate_picks().
     """
     start = text.find("{")
     if start < 0:
-        return []
+        return None
     blob = re.search(r"\{.*\}", text, re.S)
     attempts = ([blob.group()] if blob else []) + [_close_open_brackets(text[start:])]
     for attempt in attempts:
         try:
-            picks = json.loads(attempt)["picks"]
-        except (json.JSONDecodeError, KeyError, TypeError):
+            obj = json.loads(attempt)
+        except json.JSONDecodeError:
             continue
-        if not isinstance(picks, list):
-            continue
-        return [p for p in picks if isinstance(p, dict)
-                and p.get("ticker") in valid and p.get("line")]
-    print("judge: unparseable response, treating as no picks:", repr(text[:500]))
-    return []
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def validate_picks(obj, valid):
+    """Return the picks list, or raise JudgeFormatError naming exactly what is wrong.
+
+    Strict on purpose. The old filter dropped bad picks silently, so an alert could
+    go out with no invalidation level and a run with a mangled reply was
+    indistinguishable in the logs from a genuine "nothing qualifies".
+    """
+    if not isinstance(obj, dict):
+        raise JudgeFormatError(f"top level is {type(obj).__name__}, expected an object")
+    if "picks" not in obj:
+        raise JudgeFormatError(f"no 'picks' key; got keys {sorted(obj)}")
+    picks = obj["picks"]
+    if not isinstance(picks, list):
+        raise JudgeFormatError(f"'picks' is {type(picks).__name__}, expected a list")
+    if len(picks) > MAX_PICKS:
+        raise JudgeFormatError(f"{len(picks)} picks, at most {MAX_PICKS} allowed")
+    seen = set()
+    for i, p in enumerate(picks):
+        where = f"picks[{i}]"
+        if not isinstance(p, dict):
+            raise JudgeFormatError(f"{where} is {type(p).__name__}, expected an object")
+        extra = set(p) - PICK_KEYS
+        if extra:
+            raise JudgeFormatError(f"{where} has unexpected key(s) {sorted(extra)}")
+        missing = PICK_KEYS - set(p)
+        if missing:
+            raise JudgeFormatError(f"{where} is missing key(s) {sorted(missing)}")
+        t, line = p["ticker"], p["line"]
+        if not isinstance(t, str):
+            raise JudgeFormatError(f"{where}.ticker is {type(t).__name__}, expected a string")
+        if t not in valid:
+            raise JudgeFormatError(
+                f"{where}.ticker {t!r} was not one of the candidates {sorted(valid)}")
+        if t in seen:
+            raise JudgeFormatError(f"{where}.ticker {t!r} appears twice")
+        seen.add(t)
+        if not isinstance(line, str):
+            raise JudgeFormatError(f"{where}.line is {type(line).__name__}, expected a string")
+        if not line.strip():
+            raise JudgeFormatError(f"{where}.line is empty")
+        if len(line) > MAX_LINE_CHARS:
+            raise JudgeFormatError(
+                f"{where}.line is {len(line)} chars, over the {MAX_LINE_CHARS} budget")
+        if "Invalid below" not in line:
+            raise JudgeFormatError(
+                f"{where}.line has no 'Invalid below: $<level>' line — every alert "
+                "must state what would prove it wrong")
+    return picks
+
+
+def parse_picks(text, valid):
+    """Parse and validate a judge reply. Raises JudgeFormatError on anything off-schema."""
+    obj = _extract_json(text)
+    if obj is None:
+        raise JudgeFormatError(
+            "no JSON object found in the reply: " + repr(text[:300]))
+    return validate_picks(obj, valid)
 
 
 # Set by judge() on every call. parse_picks is silent when the reply has no braces,
@@ -127,24 +212,48 @@ LAST_REPLY = ""
 LAST_STOP_REASON = ""
 
 
-def judge(candidates):
-    """Ask Claude which candidates merit an alert. Returns picks (possibly empty)."""
+def judge(candidates, client=None):
+    """Ask Claude which candidates merit an alert.
+
+    Returns a validated picks list (possibly empty — that is a real rejection).
+    Raises JudgeFormatError if the reply is off-schema twice in a row. One bounded
+    retry, quoting the exact validation error back to the model; then it fails
+    loudly rather than pretending the day had no picks.
+    """
     global LAST_REPLY, LAST_STOP_REASON
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
-    resp = client.messages.create(
-        model="claude-sonnet-5",
-        # Sonnet 5 runs adaptive thinking when `thinking` is omitted (4.6 did not),
-        # so max_tokens now covers thinking + the JSON. 1500 risked a truncated
-        # reply, which parse_picks reads as "no picks" — alerts would just stop.
-        max_tokens=4000,
-        thinking={"type": "adaptive"},
-        output_config={"effort": "medium"},  # low made the judge lazily reject everything
-        system=SYSTEM,
-        messages=[{"role": "user", "content": json.dumps(candidates)}],
-    )
-    text = next((b.text for b in resp.content if b.type == "text"), "")
-    LAST_REPLY, LAST_STOP_REASON = text, resp.stop_reason
-    return parse_picks(text, {c["ticker"] for c in candidates})
+    client = client or anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
+    valid = {c["ticker"] for c in candidates}
+    messages = [{"role": "user", "content": json.dumps(candidates)}]
+    last_error = None
+    for attempt in (1, 2):
+        resp = client.messages.create(
+            model="claude-sonnet-5",
+            # Sonnet 5 runs adaptive thinking when `thinking` is omitted (4.6 did not),
+            # so max_tokens now covers thinking + the JSON. 1500 risked a truncated
+            # reply — which used to read as "no picks" and silently stop alerts, and
+            # now raises JudgeFormatError instead.
+            max_tokens=4000,
+            thinking={"type": "adaptive"},
+            output_config={"effort": "medium"},  # low made the judge lazily reject everything
+            system=SYSTEM,
+            messages=messages,
+        )
+        text = next((b.text for b in resp.content if b.type == "text"), "")
+        LAST_REPLY, LAST_STOP_REASON = text, resp.stop_reason
+        try:
+            return parse_picks(text, valid)
+        except JudgeFormatError as e:
+            last_error = e
+            if attempt == 2:
+                break
+            print(f"judge: reply {attempt} off-schema ({e}) — retrying once")
+            messages = messages + [
+                {"role": "assistant", "content": text or "(empty reply)"},
+                {"role": "user", "content": SCHEMA_REMINDER.format(reason=e)},
+            ]
+    raise JudgeFormatError(
+        f"judge returned an off-schema reply twice; last error: {last_error}. "
+        f"stop_reason={LAST_STOP_REASON!r} raw={LAST_REPLY[:300]!r}")
 
 
 if __name__ == "__main__":
@@ -166,26 +275,32 @@ if __name__ == "__main__":
     assert signal_types(ob[0]) == 2
     print("rank self-check ok")
 
-    # self-check: the response shapes that crashed live runs must all parse or degrade to []
+    # self-check: the schema contract. The exhaustive cases live in test_analyzer.py
+    # (.venv/bin/python -m pytest test_analyzer.py -q); these are the two that must
+    # never regress — recover a recoverable reply, reject everything else out loud.
     def _parse(text):
         return parse_picks(text, {"BBB"})
 
-    good = '{"picks": [{"ticker": "BBB", "line": "BBB $10 — up"}]}'
+    good = ('{"picks": [{"ticker": "BBB", "line": "BBB $10 \u2014 up\\nRisks: x\\n'
+            'Verdict: y\\nInvalid below: $9.10"}]}')
     assert len(_parse(good)) == 1
     assert len(_parse("Here are my picks:\n```json\n" + good + "\n```")) == 1  # prose + fences
-    assert len(_parse('{"picks": [{"ticker": "BBB", "line": "BBB $10 — up\\nRisks: x\\n'
-                      'Verdict: y\\nInvalid below: $9.10"}]}')) == 1          # 4-line shape
-    assert _parse("None of these candidates are actionable today.") == []     # plain English
-    assert _parse('{"picks": [{"ticker": "ZZZ", "line": "x"}]}') == []        # hallucinated ticker
-    assert _parse('{"picks": [{"ticker": "BBB"}]}') == []                     # missing line
-    assert _parse('{"verdict": "no"}') == []                                  # wrong schema
-    assert _parse('{"picks": 5}') == []                                       # picks not a list
     # brackets left open but every string closed: content is complete, so recover it.
     # This is the real 2026-07-24 reply shape — valid JSON one `}` short — which
     # silently cost a correctly-judged pick before _close_open_brackets existed.
-    assert len(_parse('{"picks": [{"ticker": "BBB", "line": "BBB $10 — up\\n'
-                      'Invalid below: $9.10"}]')) == 1
-    assert len(_parse('{"picks": [{"ticker": "BBB", "line": "x"')) == 1
-    # but a reply that died mid-sentence stays dropped — never send half an alert
-    assert _parse('{"picks": [{"ticker": "BBB", "line": "BBB $10 — up') == []
+    assert len(_parse(good[:-2])) == 1
+    assert _parse('{"picks": []}') == []   # a real "nothing qualifies" is not an error
+    for bad in ["None of these candidates are actionable today.",   # prose only
+                '{"verdict": "no"}',                                 # wrong schema
+                '{"picks": 5}',                                      # picks not a list
+                '{"picks": [{"ticker": "ZZZ", "line": "x\\nInvalid below: $1"}]}',
+                '{"picks": [{"ticker": "BBB"}]}',                    # missing line
+                '{"picks": [{"ticker": "BBB", "line": "BBB $10 up"}]}',  # no invalidation
+                good[:-20]]:                                         # died mid-sentence
+        try:
+            _parse(bad)
+        except JudgeFormatError:
+            pass
+        else:
+            raise AssertionError("should have raised JudgeFormatError: " + bad)
     print("judge-parse self-check ok")

@@ -219,7 +219,15 @@ def main():
                           len(candidates))
 
         if candidates and mode == "alert":
-            picks = analyzer.judge(candidates)
+            try:
+                picks = analyzer.judge(candidates)
+            except analyzer.JudgeFormatError:
+                # Loud, not silent. Off-schema twice (after one corrective retry) is a
+                # broken judge, not a quiet day — it used to look identical to
+                # "nothing qualifies" in the logs. No alert goes out on a reply we
+                # could not trust, but the run continues so the digest still lands.
+                log.exception("JUDGE FORMAT FAILURE — no alert sent, fix the prompt/model")
+                picks = []
             if picks:
                 notify.send("\n\n".join(p["line"] for p in picks))
                 tracker.log_picks(picks, candidates)

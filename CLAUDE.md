@@ -64,9 +64,31 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
   choose-the-best-of-N with effort `medium`. If alerts ever go quiet for weeks
   again, read the `judged none of N` lines first: candidates reaching the judge
   means the screens work and the prompt is the wall.
-- **`parse_picks` must stay tolerant.** It regex-extracts `{...}` from anywhere
-  in the reply and never raises; a bad reply means no picks, not a dead run.
-  Do not "tighten" it back to a strict `json.loads`.
+- **Extraction is tolerant, validation is strict — do not merge the two.**
+  `_extract_json` still regex-extracts `{...}` from anywhere in the reply and
+  repairs unclosed brackets (prose and code fences are model quirks, not schema
+  violations). `validate_picks` then judges the *contents* strictly and raises
+  `JudgeFormatError`. Superseded Sep 6 2026 the old "parse_picks must stay
+  tolerant, a bad reply means no picks" rule: that tolerance was hiding real
+  breakage, because a mangled reply logged identically to a genuine rejection —
+  the exact shape that already cost two live alerts. Never go back to `try:
+  parse ... except: return []`.
+- **`judge()` retries exactly once, then raises.** On a `JudgeFormatError` it
+  re-sends with the assistant's bad reply plus `SCHEMA_REMINDER` quoting the
+  precise error, then gives up. Bounded on purpose — an unbounded retry loop
+  against a model that has decided to write prose burns real money per attempt.
+  `{"picks": []}` is a valid answer and is never retried.
+- **The schema lives in three places and they must move together:** the contract
+  comment above `SCHEMA_REMINDER`, the tail of `SYSTEM`, and `validate_picks`.
+  Adding a field to the alert means editing all three plus `test_analyzer.py`.
+- **`main.py` catches `JudgeFormatError` and keeps going.** It logs
+  `JUDGE FORMAT FAILURE` with a traceback and sends no alert, but does not kill
+  the run — the digest block below it must still get its chance. That catch is
+  the *only* place the error may be absorbed; `judge_smoke.py` lets it exit
+  non-zero so the workflow step fails.
+- **`pytest` is a local-only dev dependency**, deliberately absent from
+  `requirements.txt` — Actions runs the agent, not the tests. Install it with
+  `.venv/bin/pip install pytest` on a fresh clone.
 - **Claude sometimes ends one `}` short of valid JSON** (seen Jul 24 2026 with
   `stop_reason: end_turn` — not a max_tokens truncation), and the greedy regex
   then also eats the closing `]`, silently dropping a good pick.

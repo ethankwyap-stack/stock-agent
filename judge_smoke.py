@@ -48,7 +48,13 @@ BAD = {
 }
 
 print("calling claude-sonnet-5 with 2 candidates (JNJ should pass, AAPL should not) ...")
-picks = analyzer.judge([GOOD, BAD])
+# judge() now raises on an off-schema reply (after one corrective retry) instead of
+# returning []. Catch it only to print the raw reply first, then still exit non-zero.
+schema_error = None
+try:
+    picks = analyzer.judge([GOOD, BAD])
+except analyzer.JudgeFormatError as e:
+    picks, schema_error = [], e
 
 # Unconditional, and first: without it a 0-pick result is indistinguishable from a
 # prose-only or truncated reply, which is the failure that cost two live alerts.
@@ -57,6 +63,9 @@ print(f"raw reply ({len(analyzer.LAST_REPLY)} chars):\n{analyzer.LAST_REPLY}\n")
 if analyzer.LAST_STOP_REASON == "max_tokens":
     sys.exit("FAIL: reply hit max_tokens — truncated replies parse as 'no picks' and "
              "would silently stop alerts. Raise max_tokens in analyzer.judge().")
+
+if schema_error:
+    sys.exit(f"FAIL: judge reply did not match the schema twice — {schema_error}")
 
 print(f"parsed {len(picks)} pick(s):")
 for p in picks:
