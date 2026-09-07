@@ -7,7 +7,8 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
 ## Live deployment
 - Repo `ethankwyap-stack/stock-agent` (**private**), workflow `.github/workflows/run.yml`.
 - Secrets are GitHub Actions repo secrets: `ANTHROPIC_API_KEY`, `TELEGRAM_TOKEN`,
-  `TELEGRAM_CHAT_ID`, `SHEET_WEBHOOK_URL`. Nothing sensitive is on disk.
+  `TELEGRAM_CHAT_ID`, `SHEET_WEBHOOK_URL`, `ALPACA_KEY`, `ALPACA_SECRET`.
+  Nothing sensitive is on disk (a local `.env` for the Alpaca keys is gitignored).
 - Cost: ~$0.40–1.00/month, all Anthropic. Actions uses ~400 of the 2,000 free
   private-repo minutes; GitHub's default $0 spending limit means it stops rather
   than bills.
@@ -21,6 +22,8 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
 - `analyzer.py` — `rank()` composite score, `judge()` the Claude call, `parse_picks()`.
 - `notify.py` — Telegram send. `tracker.py` — appends picks to the Google Sheet.
 - `outcomes.py` — grades past picks at 5d/20d from `picks_log.jsonl`, into the digest.
+- `broker.py` — mirrors every alert into the Alpaca **paper** account: one market
+  order per pick, 10% of equity, stop-loss at the alert's own invalidation level.
 - `sheet_webhook.gs` — Apps Script source for that sheet (deployed separately).
 
 ## Local run
@@ -124,6 +127,20 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
 - **`state.json` lives in the Actions cache**, not the repo. Cache keys are
   immutable: save under `state-${{ github.run_id }}`, restore by prefix `state-`.
   Eviction just resets alert memory — harmless.
+- **`broker.py` is paper-only by construction.** `ALPACA_BASE` defaults to
+  `paper-api.alpaca.markets`, and `buy()` refuses to send orders to any other host
+  unless `ALPACA_ALLOW_LIVE=yes` — which is set nowhere, in no workflow, on purpose.
+  Do not add it without a deliberate decision; the account it would reach is real money.
+- **Alpaca answers a cancel with 204 and an empty body**, so `r.json()` raises on
+  *success*. `_api` returns `None` when `r.content` is empty. Any new endpoint that
+  can return 204 hits the same trap.
+- **A paper order placed outside market hours is accepted, not filled** — it sits
+  `accepted` and executes at the next open, and the OTO stop leg sits `held` until
+  the entry fills. So a `--force` run after the close proves the order path but
+  proves nothing about fills.
+- **Never double a position on a re-alert.** `buy()` skips any ticker already in
+  `/v2/positions`; a `RESEND_JUMP` re-alert is a stronger signal on the same idea,
+  not a second trade.
 - **The Apps Script is standalone, not sheet-bound** — it must use `openById`,
   never `getActiveSpreadsheet`, and needs `installTrigger()` for on-open refresh.
   A row appearing in the sheet is the only real test; curl probes of `/exec`

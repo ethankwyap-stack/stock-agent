@@ -125,7 +125,7 @@ def closing_note(now):
 
 def main():
     now = datetime.now(ZoneInfo("America/New_York"))
-    import screener, sentiment, earnings, facts, analyzer, notify, tracker, outcomes
+    import screener, sentiment, earnings, facts, analyzer, notify, tracker, outcomes, broker
 
     state = load_state()
     today = now.date().isoformat()
@@ -231,6 +231,11 @@ def main():
             if picks:
                 notify.send("\n\n".join(p["line"] for p in picks))
                 tracker.log_picks(picks, candidates)
+                # Paper fills, so the scorecard grades a real execution rather
+                # than the alert-time price. Never allowed to break the alert.
+                placed = broker.buy(picks, candidates)
+                if placed:
+                    log.info("broker: paper orders placed — %s", ", ".join(placed))
                 scores = {s["ticker"]: s["score"] for s in candidates}
                 for p in picks:
                     state["sent"][p["ticker"]] = {"date": today, "score": scores[p["ticker"]]}
@@ -266,6 +271,9 @@ def main():
                     msg += "\n\n" + card
             except Exception:
                 log.exception("outcomes report failed, sending digest without it")
+            paper = broker.portfolio_line()
+            if paper:
+                msg += "\n\n" + paper
         notify.send(msg)
         state["last_alert"] = today
         log.info("Sent daily digest.")

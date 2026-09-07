@@ -35,6 +35,27 @@ carries its invalidation level. Exits non-zero otherwise.
 ```
 Or on GitHub: Actions → stock-alert → Run workflow → **smoke**.
 
+## Every alert is mirrored into an Alpaca PAPER account
+
+**Promise:** when the judge returns picks, `broker.buy()` places one paper market
+order per pick — a fixed slice of equity, capped by free cash, with a stop-loss
+at the alert's own `Invalid below: $X` level. A ticker already held is skipped. A
+broker failure never suppresses the Telegram alert. It cannot trade real money:
+`ALPACA_BASE` defaults to the paper host and a non-paper host is refused unless
+`ALPACA_ALLOW_LIVE=yes`, which is set nowhere.
+
+**Prove it:**
+```bash
+.venv/bin/python -m pytest test_broker.py -q    # 15 passed
+```
+Covers: stop level parsed (commas, no cents, absent); share count from the equity
+slice, capped by cash, zero on an unaffordable or junk price; the order body
+(market + OTO + stop_price); held tickers skipped; a missing stop degrades to a
+plain order rather than no trade; a dead API and missing keys both return `[]`.
+
+**Live check:** Actions → stock-alert → Run workflow → **force**, then look at
+the Alpaca paper dashboard for the order.
+
 ## The offline pipeline still runs
 
 ```bash
