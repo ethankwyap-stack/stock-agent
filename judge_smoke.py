@@ -1,6 +1,6 @@
-"""Smoke-test the Claude judge call with two fake candidates. Costs ~half a cent.
+"""Smoke-test the Claude judge call with two fake candidates. Billed to the Claude plan.
 
-Needs ANTHROPIC_API_KEY in the environment. Nothing is sent to Telegram or the
+Needs the `claude` CLI, logged in (locally) or CLAUDE_CODE_OAUTH_TOKEN set (Actions). Nothing is sent to Telegram or the
 sheet. Run this after changing the model, its request parameters, or the prompt:
 
     python judge_smoke.py
@@ -10,13 +10,13 @@ the output format — it just returns 0 picks and proves nothing. One is built t
 be accepted and one to be rejected, so the same half-cent call tests both the
 `Invalid below: $X` line and whether the judge still discriminates.
 """
-import os
+import shutil
 import sys
 
 import analyzer
 
-if not os.environ.get("ANTHROPIC_API_KEY"):
-    sys.exit("ANTHROPIC_API_KEY is not set — export it first, then re-run.")
+if not shutil.which("claude"):
+    sys.exit("claude CLI not found — npm install -g @anthropic-ai/claude-code, then re-run.")
 
 # Built to be ACCEPTED: cheap, low-beta, oversold near its 52wk lows with 22%
 # upside and no earnings in the window. The bear case here is genuinely weak, so

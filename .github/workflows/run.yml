@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
       smoke:
-        description: "One real Claude judge call on a fake candidate (~half a cent, no Telegram)"
+        description: "One real Claude judge call on fake candidates (plan usage, no Telegram)"
         type: boolean
         default: false
 
@@ -31,6 +31,8 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
+      # The judge calls `claude -p`, billed to the Claude plan via CLAUDE_CODE_OAUTH_TOKEN.
+      - run: npm install -g @anthropic-ai/claude-code@2.1.299 --no-fund --no-audit
       # Restore alert memory from the most recent run (cache keys are immutable,
       # so each run saves under a fresh key and restores the newest "state-" match).
       - uses: actions/cache/restore@v5
@@ -59,12 +61,12 @@ jobs:
         # upside gate often empties the candidate list before Claude is ever called
         run: python judge_smoke.py
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       - if: ${{ !inputs.test && !inputs.smoke }}
         # `force` is empty on scheduled runs, so this is a bare `python main.py` there
         run: python main.py ${{ inputs.force && '--force' || '' }}
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SHEET_WEBHOOK_URL: ${{ secrets.SHEET_WEBHOOK_URL }}

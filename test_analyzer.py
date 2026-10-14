@@ -145,3 +145,40 @@ def test_judge_records_the_raw_reply_and_stop_reason():
     analyzer.judge(CANDS, client=c)
     assert analyzer.LAST_STOP_REASON == "end_turn"
     assert "BBB" in analyzer.LAST_REPLY
+
+
+def test_cli_client_flattens_the_retry_into_one_prompt_and_parses_json(monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, input, **kw):
+        seen["cmd"], seen["input"] = cmd, input
+
+        class R:
+            returncode = 0
+            stdout = '{"result": "{\\"picks\\": []}", "stop_reason": "end_turn", "is_error": false}'
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(analyzer.subprocess, "run", fake_run)
+    resp = analyzer.CliClient().messages.create(
+        model="claude-sonnet-5", system="SYS", output_config={"effort": "medium"},
+        messages=[{"role": "user", "content": "cands"},
+                  {"role": "assistant", "content": "bad"},
+                  {"role": "user", "content": "fix it"}])
+    assert resp.content[0].text == '{"picks": []}' and resp.stop_reason == "end_turn"
+    cmd = seen["cmd"]
+    assert cmd[:2] == ["claude", "-p"] and cmd[cmd.index("--model") + 1] == "claude-sonnet-5"
+    assert cmd[cmd.index("--system-prompt") + 1] == "SYS"
+    assert cmd[cmd.index("--effort") + 1] == "medium"
+    assert cmd[cmd.index("--tools") + 1] == ""  # no tools: a judge, not an agent
+    assert "cands" in seen["input"] and "bad" in seen["input"] and "fix it" in seen["input"]
+
+
+def test_cli_client_raises_on_cli_error(monkeypatch):
+    class R:
+        returncode = 1
+        stdout = '{"result": "Invalid API key", "is_error": true}'
+        stderr = ""
+    monkeypatch.setattr(analyzer.subprocess, "run", lambda *a, **k: R())
+    with pytest.raises(RuntimeError):
+        analyzer.CliClient().messages.create(model="m", system="s", messages=[{"role": "user", "content": "x"}])

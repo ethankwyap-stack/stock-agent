@@ -29,9 +29,9 @@ raises; a valid empty reply is not retried.
 (overbought at 88% of range, earnings in 6 days) is rejected; every accepted line
 carries its invalidation level. Exits non-zero otherwise.
 
-**Prove it:** needs `ANTHROPIC_API_KEY` (Actions secret; not on this Mac).
+**Prove it:** needs the `claude` CLI logged in (Mac) or `CLAUDE_CODE_OAUTH_TOKEN` (Actions).
 ```bash
-.venv/bin/python judge_smoke.py        # ~half a cent, one real call
+.venv/bin/python judge_smoke.py        # one real call, plan usage
 ```
 Or on GitHub: Actions → stock-alert → Run workflow → **smoke**.
 

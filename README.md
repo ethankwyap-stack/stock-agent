@@ -59,9 +59,9 @@ Do these one at a time.
 3. Open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser and
    copy the `"chat":{"id": ...}` number — that's `TELEGRAM_CHAT_ID`.
 
-### 2. Anthropic API key
+### 2. Claude plan token
 
-Get one at https://console.anthropic.com → API Keys. That's `ANTHROPIC_API_KEY`.
+Run `claude setup-token` and copy the token. That's `CLAUDE_CODE_OAUTH_TOKEN`. Usage counts against your Claude plan, no per-token bill.
 (This is the only paid service — each run that finds signals costs about half a
 cent on claude-sonnet-5; quiet runs cost nothing. Measured total: under $1/mo.)
 
@@ -69,7 +69,7 @@ cent on claude-sonnet-5; quiet runs cost nothing. Measured total: under $1/mo.)
 
 1. Push this repo to GitHub.
 2. Repo → Settings → Secrets and variables → Actions → New repository secret.
-   Add all three: `ANTHROPIC_API_KEY`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`.
+   Add all three: `CLAUDE_CODE_OAUTH_TOKEN`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`.
    (Sentiment comes from Yahoo Finance's public comment/news APIs — no key needed.)
 3. The workflow (`.github/workflows/run.yml`) asks for a run every 30 minutes,
    9am-4pm ET, Mon-Fri. GitHub treats scheduled runs as best-effort and in
@@ -84,7 +84,7 @@ cent on claude-sonnet-5; quiet runs cost nothing. Measured total: under $1/mo.)
 
 ```bash
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=... TELEGRAM_TOKEN=... TELEGRAM_CHAT_ID=...
+export TELEGRAM_TOKEN=... TELEGRAM_CHAT_ID=...
 python main.py --force   # --force skips the market-hours check
 ```
 

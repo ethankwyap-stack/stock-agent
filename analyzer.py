@@ -1,7 +1,8 @@
 """Combine signals into a scored ranking; Claude judges which candidates are truly actionable."""
 import json
 import re
-import anthropic
+import subprocess
+from types import SimpleNamespace
 
 SYSTEM = (
     "You are a skeptical stock analyst. You "
@@ -212,6 +213,37 @@ LAST_REPLY = ""
 LAST_STOP_REASON = ""
 
 
+class CliClient:
+    """Stand-in for anthropic.Anthropic() that runs `claude -p` instead.
+
+    Billed to the Claude plan via CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`),
+    not per token via ANTHROPIC_API_KEY. Same .messages.create() shape, so judge()
+    and the FakeClient tests don't change. The CLI takes one prompt, so a retry's
+    assistant/user turns are flattened into a transcript.
+    """
+
+    def __init__(self):
+        self.messages = self
+
+    def create(self, model, system, messages, output_config=None, **_):
+        prompt = messages[0]["content"] if len(messages) == 1 else "\n\n".join(
+            f"[{m['role']}]\n{m['content']}" for m in messages)
+        cmd = ["claude", "-p", "--model", model, "--system-prompt", system,
+               "--tools", "", "--output-format", "json",
+               "--no-session-persistence", "--setting-sources", ""]
+        if output_config and output_config.get("effort"):
+            cmd += ["--effort", output_config["effort"]]
+        r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=600)
+        try:
+            out = json.loads(r.stdout)
+        except ValueError:
+            raise RuntimeError(f"claude -p exit {r.returncode}: {(r.stderr or r.stdout)[:500]}")
+        if r.returncode or out.get("is_error"):
+            raise RuntimeError(f"claude -p failed: {str(out.get('result'))[:500]}")
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text=out.get("result") or "")],
+                               stop_reason=out.get("stop_reason"))
+
+
 def judge(candidates, client=None):
     """Ask Claude which candidates merit an alert.
 
@@ -221,19 +253,15 @@ def judge(candidates, client=None):
     loudly rather than pretending the day had no picks.
     """
     global LAST_REPLY, LAST_STOP_REASON
-    client = client or anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
+    client = client or CliClient()  # claude -p, billed to the plan
     valid = {c["ticker"] for c in candidates}
     messages = [{"role": "user", "content": json.dumps(candidates)}]
     last_error = None
     for attempt in (1, 2):
         resp = client.messages.create(
             model="claude-sonnet-5",
-            # Sonnet 5 runs adaptive thinking when `thinking` is omitted (4.6 did not),
-            # so max_tokens now covers thinking + the JSON. 1500 risked a truncated
-            # reply — which used to read as "no picks" and silently stop alerts, and
-            # now raises JudgeFormatError instead.
-            max_tokens=4000,
-            thinking={"type": "adaptive"},
+            # claude -p thinks adaptively with a 64k output cap, so the old max_tokens
+            # truncation trap (a cut reply read as "no picks") can't recur here.
             output_config={"effort": "medium"},  # low made the judge lazily reject everything
             system=SYSTEM,
             messages=messages,

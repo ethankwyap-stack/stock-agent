@@ -6,10 +6,11 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
 
 ## Live deployment
 - Repo `ethankwyap-stack/stock-agent` (**private**), workflow `.github/workflows/run.yml`.
-- Secrets are GitHub Actions repo secrets: `ANTHROPIC_API_KEY`, `TELEGRAM_TOKEN`,
+- Secrets are GitHub Actions repo secrets: `CLAUDE_CODE_OAUTH_TOKEN`, `TELEGRAM_TOKEN`,
   `TELEGRAM_CHAT_ID`, `SHEET_WEBHOOK_URL`, `ALPACA_KEY`, `ALPACA_SECRET`.
   Nothing sensitive is on disk (a local `.env` for the Alpaca keys is gitignored).
-- Cost: ~$0.40–1.00/month, all Anthropic. Actions uses ~400 of the 2,000 free
+- Cost: $0. The judge runs `claude -p` (CLI pinned in run.yml) on the Claude plan via
+  `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` (token lasts ~1 year). No API key. Actions uses ~400 of the 2,000 free
   private-repo minutes; GitHub's default $0 spending limit means it stops rather
   than bills.
 
@@ -31,7 +32,7 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
 .venv/bin/python main.py --selfcheck   # offline: time/message branches, state loading
 .venv/bin/python analyzer.py           # offline: scoring + 7 Claude-reply shapes
 .venv/bin/python screener.py           # offline: RSI math
-.venv/bin/python judge_smoke.py        # ONE real Claude call on 2 candidates, ~half a cent, needs the key
+.venv/bin/python judge_smoke.py        # ONE real Claude call on 2 candidates, plan usage, needs `claude` logged in
 .venv/bin/python main.py --force       # full run, needs all keys, really sends Telegram
 ```
 Local `.venv` is Python 3.9; Actions runs 3.12.
