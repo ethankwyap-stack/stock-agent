@@ -56,6 +56,19 @@ plain order rather than no trade; a dead API and missing keys both return `[]`.
 **Live check:** Actions → stock-alert → Run workflow → **force**, then look at
 the Alpaca paper dashboard for the order.
 
+## The scorecard grades against SPY, and every judgment is logged
+
+**Promise:** past picks are graded on the close 5 and 20 *trading* days after
+entry, shown as raw % and as points vs SPY over the same bars. A pick without
+enough closed bars, or without data, stays ungraded and retries next run. Each
+horizon is graded once. Every judge call appends to `judge_log.jsonl` with all
+candidates, even when it picks nothing; logging never raises.
+
+**Prove it:**
+```bash
+.venv/bin/python -m pytest test_outcomes.py -q    # 6 passed
+```
+
 ## The offline pipeline still runs
 
 ```bash

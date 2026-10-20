@@ -16,7 +16,7 @@ earnings.py  -> earnings within 7 days + avg post-earnings move, top 30 by score
 facts.py     -> finalist fact pack: analyst target, 52wk position, P/E, beta
 analyzer.py  -> composite score + Claude (claude-sonnet-5) as skeptical judge
 notify.py    -> Telegram bot message
-outcomes.py  -> grades past picks at 5d/20d, appended to the post-close digest
+outcomes.py  -> grades past picks at 5/20 trading days vs SPY; logs every judge call
 main.py      -> orchestrates; gates candidates, remembers what it already sent
 ```
 

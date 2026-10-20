@@ -40,6 +40,7 @@ jobs:
           path: |
             state.json
             picks_log.jsonl
+            judge_log.jsonl
           key: state-${{ github.run_id }}
           restore-keys: state-
       - if: ${{ inputs.test }}
@@ -81,4 +82,5 @@ jobs:
           path: |
             state.json
             picks_log.jsonl
+            judge_log.jsonl
           key: state-${{ github.run_id }}

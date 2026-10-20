@@ -94,6 +94,8 @@ def _close_open_brackets(s):
     return s if in_str else s + "".join(reversed(stack))
 
 
+# Logged with every judgment: a model change restarts the judge's track record.
+MODEL = "claude-sonnet-5"
 MAX_PICKS = 3
 MAX_LINE_CHARS = 480
 PICK_KEYS = {"ticker", "line"}
@@ -259,7 +261,7 @@ def judge(candidates, client=None):
     last_error = None
     for attempt in (1, 2):
         resp = client.messages.create(
-            model="claude-sonnet-5",
+            model=MODEL,
             # claude -p thinks adaptively with a 64k output cap, so the old max_tokens
             # truncation trap (a cut reply read as "no picks") can't recur here.
             output_config={"effort": "medium"},  # low made the judge lazily reject everything

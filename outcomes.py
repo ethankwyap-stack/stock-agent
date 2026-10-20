@@ -21,11 +21,17 @@ log = logging.getLogger("stock-agent")
 # themselves never depend on this file.
 LOG = pathlib.Path(__file__).parent / "picks_log.jsonl"
 
-# Horizon name -> calendar days of age that make it due.
-# ponytail: 5 and 20 trading days approximated as 7 and 28 calendar days rather
-# than pulling in a market calendar; a holiday shifts a scorecard by a day, which
-# does not change a hit-rate readout.
-HORIZONS = [("5d", 7), ("20d", 28)]
+# Separate log of every judge call, rejected candidates included. picks_log only
+# ever sees what the judge chose, so it can never say whether the judge beats
+# simply alerting on rank()'s top score. Same cache, same disposability.
+JUDGE_LOG = pathlib.Path(__file__).parent / "judge_log.jsonl"
+
+# Horizon name -> trading days after the entry day. Graded on that day's close,
+# net of SPY over the same bars, so a rising market is not read as skill.
+HORIZONS = [("5d", 5), ("20d", 20)]
+
+SIGNAL_NAMES = [("unusual_volume", "volume"), ("breakout_20d", "breakout"),
+                ("rsi_oversold", "oversold"), ("rsi_overbought", "overbought")]
 
 
 def _load(path):
@@ -53,16 +59,27 @@ def _save(path, rows):
             f.write(json.dumps(row) + "\n")
 
 
-def _last_price(ticker):
+def last_price(ticker):
     try:
         return float(yf.Ticker(ticker).fast_info["last_price"])
     except Exception:
-        log.warning("outcomes: no current price for %s, will retry next run", ticker)
+        log.warning("outcomes: no current price for %s", ticker)
+        return None
+
+
+def _history(ticker, date):
+    """Daily closes from the entry day on: [0] is the entry day, [n] is n trading
+    days later. Unadjusted, to match the unadjusted price logged at alert time."""
+    try:
+        closes = yf.Ticker(ticker).history(start=date, auto_adjust=False)["Close"]
+        return [float(c) for c in closes] or None
+    except Exception:
+        log.warning("outcomes: no history for %s, will retry next run", ticker)
         return None
 
 
 def record(picks, candidates, path=LOG):
-    """Append one line per pick: ticker, date, entry price. Never raises.
+    """Append one line per pick: ticker, date, entry price, SPY. Never raises.
 
     Called from tracker.log_picks for every alert, whether or not the sheet post
     happens — grading must not depend on the webhook being configured.
@@ -70,52 +87,85 @@ def record(picks, candidates, path=LOG):
     try:
         by_ticker = {s["ticker"]: s for s in candidates}
         today = datetime.date.today().isoformat()
+        spy = last_price("SPY")
         with open(path, "a") as f:
             for p in picks:
                 price = by_ticker.get(p["ticker"], {}).get("facts", {}).get("price")
                 if not price:
                     continue  # no entry price means no return to compute later
                 f.write(json.dumps({"ticker": p["ticker"], "date": today,
-                                    "price": price, "scored": []}) + "\n")
+                                    "price": price, "spy": spy, "scored": []}) + "\n")
     except Exception:
         log.exception("outcomes: could not log picks, alert already sent — continuing")
 
 
+def log_judgment(candidates, picks, spy, path=JUDGE_LOG, today=None):
+    """Append one line per judge call — every candidate, the picks (maybe none),
+    the model and SPY. Never raises: this is bookkeeping, never worth an alert."""
+    try:
+        import analyzer
+        row = {"date": (today or datetime.date.today()).isoformat(),
+               "model": analyzer.MODEL, "spy": spy,
+               "picks": [p["ticker"] for p in picks],
+               "candidates": [{"ticker": s["ticker"], "score": s.get("score"),
+                               "price": s.get("facts", {}).get("price"),
+                               "signals": [name for key, name in SIGNAL_NAMES if s.get(key)]}
+                              for s in candidates]}
+        with open(path, "a") as f:
+            f.write(json.dumps(row) + "\n")
+    except Exception:
+        log.exception("outcomes: could not log judgment — continuing")
+
+
 def _due(rows, today):
-    """(row index, horizon) for every pick old enough to grade and not yet graded."""
+    """(row index, horizon, trading days) for every pick that may be gradeable.
+
+    Calendar age >= n is only a cheap pre-filter; whether n trading days have
+    actually closed is decided by the length of the price history.
+    """
     out = []
     for i, row in enumerate(rows):
         try:
             age = (today - datetime.date.fromisoformat(row["date"])).days
         except (KeyError, TypeError, ValueError):
             continue  # a row without a usable date is not gradeable
-        for name, cal_days in HORIZONS:
-            if age >= cal_days and name not in row.get("scored", []):
-                out.append((i, name))
+        for name, n in HORIZONS:
+            if age >= n and name not in row.get("scored", []):
+                out.append((i, name, n))
     return out
 
 
-def report(path=LOG, today=None, price_fn=None):
+def report(path=LOG, today=None, history_fn=None):
     """Grade whatever has come due, once per horizon. Returns a summary or "".
 
-    `today` and `price_fn` are injected by the self-check so the bucketing can be
+    `today` and `history_fn` are injected by test_outcomes.py so grading is
     proven offline.
     """
     rows = _load(path)
     if not rows:
         return ""
     today = today or datetime.date.today()
-    price_fn = price_fn or _last_price
+    history_fn = history_fn or _history
+    cache = {}
+
+    def hist(ticker, date):
+        if (ticker, date) not in cache:
+            cache[ticker, date] = history_fn(ticker, date)
+        return cache[ticker, date]
+
     graded = {}
-    for i, horizon in _due(rows, today):
+    for i, horizon, n in _due(rows, today):
         row = rows[i]
         if not row.get("price"):
             continue
-        now_price = price_fn(row["ticker"])
-        if now_price is None:
-            continue  # leave it unmarked and try again next run
-        pct = (now_price / row["price"] - 1) * 100
-        graded.setdefault(horizon, []).append(f"{row['ticker']} {pct:+.1f}%")
+        t, s = hist(row["ticker"], row["date"]), hist("SPY", row["date"])
+        if not t or not s or len(t) <= n or len(s) <= n:
+            continue  # not enough closed bars yet, or no data — try next run
+        pct = (t[n] / row["price"] - 1) * 100
+        # seeded picks predate the stored SPY price; entry-day close stands in
+        spy_pct = (s[n] / (row.get("spy") or s[0]) - 1) * 100
+        graded.setdefault(horizon, []).append(
+            f"{row['ticker']} {pct:+.1f}% ({pct - spy_pct:+.1f} vs SPY)")
         row.setdefault("scored", []).append(horizon)
     if not graded:
         return ""
@@ -123,50 +173,3 @@ def report(path=LOG, today=None, price_fn=None):
     parts = [f"{name}: " + ", ".join(graded[name])
              for name, _ in HORIZONS if name in graded]
     return "Picks scorecard — " + " | ".join(parts)
-
-
-if __name__ == "__main__":
-    import tempfile
-
-    today = datetime.date(2026, 7, 24)
-
-    def _ago(n):
-        return (today - datetime.timedelta(days=n)).isoformat()
-
-    rows = [{"ticker": "NEW", "date": _ago(3), "price": 100.0, "scored": []},
-            {"ticker": "MID", "date": _ago(10), "price": 100.0, "scored": []},
-            {"ticker": "OLD", "date": _ago(30), "price": 100.0, "scored": []}]
-    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
-        path = pathlib.Path(f.name)
-
-    prices = {"NEW": 110.0, "MID": 103.0, "OLD": 90.0}  # stubbed: fully offline
-
-    # bucketing: 10 days old is 5d-due only, 30 days old is due at both horizons,
-    # 3 days old is too new to grade at all
-    card = report(path, today=today, price_fn=prices.get)
-    assert "5d:" in card and "MID +3.0%" in card, card
-    assert "20d:" in card and "OLD -10.0%" in card, card
-    assert "NEW" not in card, card
-
-    # once-only: nothing comes due twice on the same day
-    assert report(path, today=today, price_fn=prices.get) == ""
-
-    # ...but a horizon that matures later still fires exactly once
-    card2 = report(path, today=today + datetime.timedelta(days=20), price_fn=prices.get)
-    assert "20d: MID +3.0%" in card2, card2   # MID's 20d matured
-    assert "5d: NEW +10.0%" in card2, card2   # NEW's 5d matured
-    assert "OLD" not in card2, card2          # OLD was already graded at both
-
-    # a price lookup that fails must not mark the pick graded
-    fresh = [{"ticker": "GONE", "date": _ago(10), "price": 100.0, "scored": []}]
-    _save(path, fresh)
-    assert report(path, today=today, price_fn=lambda t: None) == ""
-    assert _load(path)[0]["scored"] == []
-    assert "GONE" in report(path, today=today, price_fn=lambda t: 105.0)
-
-    # an empty or missing log is silence, not a crash
-    assert report(pathlib.Path("/nonexistent/picks_log.jsonl"), today=today) == ""
-    path.unlink()
-    print("outcomes self-check ok")

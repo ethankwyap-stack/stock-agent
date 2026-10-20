@@ -22,7 +22,9 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
 - `facts.py` — fact pack (analyst target, 52wk position, P/E, beta) for finalists only.
 - `analyzer.py` — `rank()` composite score, `judge()` the Claude call, `parse_picks()`.
 - `notify.py` — Telegram send. `tracker.py` — appends picks to the Google Sheet.
-- `outcomes.py` — grades past picks at 5d/20d from `picks_log.jsonl`, into the digest.
+- `outcomes.py` — grades past picks at 5/20 *trading* days, net of SPY, from
+  `picks_log.jsonl`, into the digest. Also writes `judge_log.jsonl`: every judge
+  call with ALL candidates, rejects included.
 - `broker.py` — mirrors every alert into the Alpaca **paper** account: one market
   order per pick, 10% of equity, stop-loss at the alert's own invalidation level.
 - `sheet_webhook.gs` — Apps Script source for that sheet (deployed separately).
@@ -125,6 +127,13 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
   committed copy changes nothing in production after that first run, and a cache
   eviction re-grades the 11 seeded picks. Both are cosmetic — a repeated scorecard,
   never a missed alert. Note it is deliberately absent from `.gitignore`.
+- **`judge_log.jsonl` is the judge's only report card.** `picks_log` sees only
+  what the judge chose, so it can never show whether the judge beats alerting on
+  `rank()`'s top score. Every judge call, empty or not, appends one line (model,
+  SPY, all candidates). Format failures are not judgments and are not logged.
+  Each line carries `analyzer.MODEL` — a model change restarts the track record,
+  and judge replays on dates before the model's knowledge cutoff measure memory,
+  not skill. Cached, gitignored, not seeded.
 - **`state.json` lives in the Actions cache**, not the repo. Cache keys are
   immutable: save under `state-${{ github.run_id }}`, restore by prefix `state-`.
   Eviction just resets alert memory — harmless.

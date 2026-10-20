@@ -227,7 +227,11 @@ def main():
                 # "nothing qualifies" in the logs. No alert goes out on a reply we
                 # could not trust, but the run continues so the digest still lands.
                 log.exception("JUDGE FORMAT FAILURE — no alert sent, fix the prompt/model")
-                picks = []
+                picks = None
+            if picks is not None:
+                # Every real judgment, rejections included — the only way to ever
+                # grade the judge against simply alerting on the top score.
+                outcomes.log_judgment(candidates, picks, spy=outcomes.last_price("SPY"))
             if picks:
                 notify.send("\n\n".join(p["line"] for p in picks))
                 tracker.log_picks(picks, candidates)
