@@ -258,9 +258,9 @@ def main():
         else:
             msg = "Daily digest — quiet day, no tickers tripped any screens."
     try:
-        card = outcomes.report()
-        if card:
-            msg += "\n\n" + card
+        for card in (outcomes.report(), outcomes.judge_report()):
+            if card:
+                msg += "\n\n" + card
     except Exception:
         log.exception("outcomes report failed, sending digest without it")
     paper = broker.portfolio_line()

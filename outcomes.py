@@ -173,3 +173,75 @@ def report(path=LOG, today=None, history_fn=None):
     parts = [f"{name}: " + ", ".join(graded[name])
              for name, _ in HORIZONS if name in graded]
     return "Picks scorecard — " + " | ".join(parts)
+
+
+def _excess(hist, ticker, row, n, price):
+    """% return n trading days after the judgment, minus SPY's, or None."""
+    t, s = hist(ticker, row["date"]), hist("SPY", row["date"])
+    if not t or not s or len(t) <= n or len(s) <= n:
+        return None
+    return (t[n] / (price or t[0]) - 1) * 100 - (s[n] / (row.get("spy") or s[0]) - 1) * 100
+
+
+def judge_report(path=JUDGE_LOG, today=None, history_fn=None, min_days=100):
+    """Does the judge beat simply alerting on rank()'s top score? Returns "" or one line.
+
+    Per judged day, net of SPY: J = the judge's picks (0 on a day it abstained —
+    sitting out a loser is a win), S = the top-score candidate, R = the average
+    candidate. Only the current analyzer.MODEL counts; a model change restarts
+    the record. Each day is graded once and stored, so history is fetched once.
+    After min_days 20-day grades, the backtest-research.md rule is applied: if
+    J-S <= 0 and its upper 80% bound is under +0.3 pts, the judge adds nothing.
+    """
+    import analyzer
+    rows = _load(path)
+    today = today or datetime.date.today()
+    history_fn = history_fn or _history
+    cache, changed = {}, False
+
+    def hist(ticker, date):
+        if (ticker, date) not in cache:
+            cache[ticker, date] = history_fn(ticker, date)
+        return cache[ticker, date]
+
+    for row in rows:
+        if row.get("model") != analyzer.MODEL or not row.get("candidates"):
+            continue
+        try:
+            age = (today - datetime.date.fromisoformat(row["date"])).days
+        except (KeyError, TypeError, ValueError):
+            continue
+        for name, n in HORIZONS:
+            if age < n or name in row.get("graded", {}):
+                continue
+            ex = {c["ticker"]: _excess(hist, c["ticker"], row, n, c.get("price"))
+                  for c in row["candidates"]}
+            if None in ex.values():
+                continue  # not closed yet or no data — try next run
+            top = max(row["candidates"], key=lambda c: c.get("score") or 0)["ticker"]
+            picks = [t for t in row.get("picks", []) if t in ex]
+            row.setdefault("graded", {})[name] = {
+                "J": round(sum(ex[t] for t in picks) / len(picks), 4) if picks else 0.0,
+                "S": round(ex[top], 4), "R": round(sum(ex.values()) / len(ex), 4)}
+            changed = True
+    if changed:
+        _save(path, rows)
+
+    parts, verdict = [], ""
+    for name, _ in HORIZONS:
+        g = [r["graded"][name] for r in rows
+             if r.get("model") == analyzer.MODEL and name in r.get("graded", {})]
+        if not g:
+            continue
+        js = [x["J"] - x["S"] for x in g]
+        jr = sum(x["J"] - x["R"] for x in g) / len(g)
+        mean = sum(js) / len(js)
+        parts.append(f"{name} over {len(g)} day{'s' * (len(g) != 1)}: "
+                     f"J-S {mean:+.1f}, J-R {jr:+.1f} pts")
+        if name == "20d" and len(g) >= min_days:
+            sd = (sum((v - mean) ** 2 for v in js) / (len(js) - 1)) ** 0.5
+            upper = mean + 1.2816 * sd / len(js) ** 0.5
+            verdict = (f" — DROP THE JUDGE: no better than the top score "
+                       f"(upper 80% bound {upper:+.2f})" if mean <= 0 and upper < 0.3
+                       else f" — judge earns its keep so far (upper 80% bound {upper:+.2f})")
+    return ("Judge vs top score — " + " | ".join(parts) + verdict) if parts else ""

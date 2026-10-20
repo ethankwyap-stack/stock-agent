@@ -78,3 +78,53 @@ def test_judge_log_keeps_every_candidate_even_on_a_rejection(tmp_path):
 
 def test_judge_log_never_raises(tmp_path):
     outcomes.log_judgment([{"no": "ticker"}], [], spy=None, path=tmp_path / "x" / "y.jsonl")
+
+
+# ------------------------------------------------- judge vs top score (J/S/R)
+
+def judged(date, picks, cands, spy=500.0, model=analyzer.MODEL):
+    return {"date": date, "model": model, "spy": spy, "picks": picks,
+            "candidates": [{"ticker": t, "score": s, "price": 100.0, "signals": []}
+                           for t, s in cands]}
+
+
+def test_judge_graded_against_top_score_and_average(tmp_path):
+    log = tmp_path / "judge.jsonl"
+    # judge passed on AAA (top score, +10%) and took BBB (flat); SPY flat
+    write(log, [judged("2026-09-01", ["BBB"], [("AAA", 4.0), ("BBB", 3.0)])])
+    hist = {"AAA": closes(25, 100.0, 0.5), "BBB": closes(25, 100.0, 0.0),
+            "SPY": closes(25, 500.0, 0.0)}
+    line = outcomes.judge_report(log, today=TODAY, history_fn=lambda t, d: hist[t])
+    # 20d: J = BBB 0, S = AAA +10, R = mean(+10, 0) = +5
+    assert "20d over 1 day: J-S -10.0, J-R -5.0 pts" in line, line
+    row = json.loads(log.read_text())
+    assert row["graded"]["20d"] == {"J": 0.0, "S": 10.0, "R": 5.0}
+    # once-only: graded days are never re-fetched
+    assert outcomes.judge_report(log, today=TODAY, history_fn=lambda t, d: 1 / 0)
+
+
+def test_judge_abstaining_scores_zero_so_dodging_a_loser_counts(tmp_path):
+    log = tmp_path / "judge.jsonl"
+    write(log, [judged("2026-09-01", [], [("AAA", 4.0)])])
+    hist = {"AAA": closes(25, 100.0, -0.5), "SPY": closes(25, 500.0, 0.0)}
+    line = outcomes.judge_report(log, today=TODAY, history_fn=lambda t, d: hist[t])
+    assert "J-S +10.0" in line, line
+
+
+def test_judge_report_ignores_other_models_and_unclosed_days(tmp_path):
+    log = tmp_path / "judge.jsonl"
+    write(log, [judged("2026-09-01", ["AAA"], [("AAA", 4.0)], model="old-model"),
+                judged("2026-10-19", ["AAA"], [("AAA", 4.0)])])
+    hist = {"AAA": closes(1, 100.0, 1.0), "SPY": closes(1, 500.0, 0.0)}
+    assert outcomes.judge_report(log, today=TODAY, history_fn=lambda t, d: hist[t]) == ""
+
+
+def test_judge_decision_rule_fires_after_enough_days(tmp_path):
+    log = tmp_path / "judge.jsonl"
+    rows = [judged("2026-09-01", ["BBB"], [("AAA", 4.0), ("BBB", 3.0)])] * 3
+    write(log, rows)
+    hist = {"AAA": closes(25, 100.0, 0.5), "BBB": closes(25, 100.0, 0.0),
+            "SPY": closes(25, 500.0, 0.0)}
+    line = outcomes.judge_report(log, today=TODAY, history_fn=lambda t, d: hist[t],
+                                 min_days=3)
+    assert "DROP THE JUDGE" in line, line

@@ -62,18 +62,47 @@ the Alpaca paper dashboard for the order.
 entry, shown as raw % and as points vs SPY over the same bars. A pick without
 enough closed bars, or without data, stays ungraded and retries next run. Each
 horizon is graded once. Every judge call appends to `judge_log.jsonl` with all
-candidates, even when it picks nothing; logging never raises.
+candidates, even when it picks nothing; logging never raises. The digest also
+grades the judge (J) against `rank()`'s top score (S) and the average candidate
+(R), net of SPY, once per judged day, current model only; abstaining scores 0.
+After 100 graded 20-day days it states whether to drop the judge.
 
 **Prove it:**
 ```bash
-.venv/bin/python -m pytest test_outcomes.py -q    # 6 passed
+.venv/bin/python -m pytest test_outcomes.py -q    # 10 passed
+```
+
+## Alerts fire only after the close
+
+**Promise:** a weekday run from 4pm ET scans final bars, judges, alerts, then
+sends the digest + scorecard. Runs before the close and on weekends never scan;
+later runs the same day exit early.
+
+**Prove it:**
+```bash
+.venv/bin/python main.py --selfcheck   # time/message self-check ok
+```
+
+## The backtest measures the live signal code
+
+**Promise:** `screener.signals()` is the one place the signal math lives;
+`scan()` and `backtest.py` both call it. The backtest enters at the next open,
+fills a gap-through stop at the open, charges costs, keeps one trade per ticker
+per holding period, counts a crash day once in its t-stat, screens only
+point-in-time S&P members, and compares every cell with a random member-day.
+
+**Prove it:**
+```bash
+.venv/bin/python screener.py                     # signals self-check ok
+.venv/bin/python -m pytest test_backtest.py -q   # 9 passed
+.venv/bin/python backtest.py                     # needs data/ from fetch_bars.py; ~4 min
 ```
 
 ## The offline pipeline still runs
 
 ```bash
 .venv/bin/python main.py --selfcheck   # time/message, state, upside-gate, vol-gate ok
-.venv/bin/python screener.py           # RSI math ok
+.venv/bin/python screener.py           # invalidation, RSI, signals ok
 ```
 
 ## Not covered

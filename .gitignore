@@ -6,3 +6,5 @@ judge_log.jsonl
 __pycache__/
 .env
 .venv/
+# backtest price history + membership, local only (fetch_bars.py)
+data/

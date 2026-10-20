@@ -15,7 +15,7 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
   than bills.
 
 ## Layout
-- `main.py` — orchestrator: market-hours gate, ranking pre-pass, gates, digest.
+- `main.py` — orchestrator: after-close gate, ranking pre-pass, gates, alert, digest.
 - `screener.py` — unusual volume / 20-day breakout / RSI extremes + volatility.
 - `sentiment.py` — Yahoo news-headline tone for the top-scoring tickers.
 - `earnings.py` — earnings within 7 days + average post-earnings move.
@@ -24,7 +24,11 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
 - `notify.py` — Telegram send. `tracker.py` — appends picks to the Google Sheet.
 - `outcomes.py` — grades past picks at 5/20 *trading* days, net of SPY, from
   `picks_log.jsonl`, into the digest. Also writes `judge_log.jsonl`: every judge
-  call with ALL candidates, rejects included.
+  call with ALL candidates, rejects included, and `judge_report()` grades it:
+  judge (J) vs `rank()`'s top score (S) vs the average candidate (R).
+- `backtest.py` — local-only event study of the price screens, 2015 on, calling
+  `screener.signals()` itself. Writes `backtest-results.md`, appends `trials.jsonl`.
+  `fetch_bars.py` downloads its data once into `data/` (gitignored).
 - `broker.py` — mirrors every alert into the Alpaca **paper** account: one market
   order per pick, 10% of equity, stop-loss at the alert's own invalidation level.
 - `sheet_webhook.gs` — Apps Script source for that sheet (deployed separately).
@@ -36,6 +40,8 @@ yfinance/pandas, runs entirely on GitHub Actions. No server.
 .venv/bin/python screener.py           # offline: RSI math
 .venv/bin/python judge_smoke.py        # ONE real Claude call on 2 candidates, plan usage, needs `claude` logged in
 .venv/bin/python main.py --force       # full run, needs all keys, really sends Telegram
+.venv/bin/python fetch_bars.py         # once: ~800 tickers since 2014 into data/ (resumable)
+.venv/bin/python backtest.py           # rewrites backtest-results.md, appends trials.jsonl
 ```
 Local `.venv` is Python 3.9; Actions runs 3.12.
 
@@ -43,20 +49,34 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
 - **smoke** — one real Claude judge call. Use this after any model change; a
   forced scan can't verify the judge because the upside gate often empties the
   candidate list first (it dropped all 5 on run 30043084820).
-- **force** — full real scan ignoring market hours; may send a real alert.
+- **force** — full real scan ignoring the after-close window; may send a real alert.
 - **test** — fake pick through Telegram + the sheet, no scan, no Claude.
 
 ## Gotchas
-- **The cron is a request, not a schedule.** It asks for a run every 30 min
-  (18/weekday); GitHub delivers 4–7, 80–100 min apart, up to 22 min late. Never
-  write logic requiring a run to land in a specific clock hour — the 3pm ET
-  digest window gets skipped outright. Estimate minutes from `gh run list`.
-- **`scan_window(now)` decides what a run may send**, not `market_open` alone:
-  `"alert"` during market hours, `"digest"` after the close on a weekday (scans
-  with final data, never alerts), `None` on weekends and pre-open. The
-  post-close run is the backstop that makes the daily digest independent of the
-  cron; it returns early if anything already went out today, so it costs at most
-  one extra scan a day.
+- **The cron is a request, not a schedule.** GitHub delivers roughly a third of
+  requested runs, up to 22 min late. Never write logic requiring a run to land in
+  a specific clock hour. That is why `run.yml` asks for 14 post-close runs a day
+  to get one. Estimate minutes from `gh run list`.
+- **Alerts fire only after the close (since Oct 20 2026).** `scan_window(now)`
+  returns `"alert"` on a weekday from 4pm ET, else `None`. The first post-close
+  run scans final bars, judges, alerts, then sends the digest + scorecard; every
+  later run that day exits early on `state["last_alert"]`. This makes the live
+  signal the same day-t-close signal `backtest.py` measures, and paper orders
+  fill at the next open — the backtest's entry. Mid-session alerting used
+  half-day volume, which no backtest can reproduce. Do not bring it back
+  without re-running the backtest on a matching definition.
+- **The backtest must call the live code.** `backtest.py` runs `screener.signals()`
+  on a 63-bar window (the live `period="3mo"`). Never copy the signal math into
+  the backtest "for speed" — 8 worker processes already do it in minutes, and a
+  copy drifts. Its events cache (`data/events.pkl`) rebuilds when `screener.py`
+  or the bars change.
+- **`backtest.py` verdicts follow a fixed bar** (|t| > 3 on 2015–21, same sign on
+  2022–26, survives 20 bps, holds in SPY up- and down-trends). Every run appends
+  to `trials.jsonl`, committed — the count of tries is part of the evidence.
+  Tweaking thresholds until a cell passes is the overfitting the bar exists to stop.
+- **Yahoo has no bars for most delisted names.** `backtest-results.md` reports the
+  missing share per year; oversold results are an upper bound because the
+  oversold names that went bust are exactly the missing ones.
 - **Never sort inside `sentiment.scan`.** Its input is pre-ranked by score by
   `main.py`. It used to sort alphabetically, which gave the sentiment score only
   to A-tickers. Same rule for `earnings.check`.
