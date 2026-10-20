@@ -48,28 +48,18 @@ def load_state():
     return {"sent": state.get("sent") or {}, "last_alert": state.get("last_alert")}
 
 
-def market_open(now):
-    return now.weekday() < 5 and 9 <= now.hour < 16
-
-
 def scan_window(now):
-    """What this run is allowed to send: "alert", "digest", or None.
+    """What this run may do: "alert" (scan, judge, alert, digest) or None.
 
-    A weekday after the close still scans — the day's data is final by then, so
-    it produces the real digest instead of guessing. It must not alert: a BUY
-    that lands at 6pm is a different message from one at 11am.
-
-    This is what makes the day's summary independent of GitHub's cron, which is
-    best-effort (observed 4-7 of the 18 requested runs a day) and regularly skips
-    the 3pm hour entirely.
+    Only a weekday after the close scans. The bars are final then, so the live
+    signal is exactly the day-t-close signal backtest.py measures, and a paper
+    order placed now fills at the next open — the backtest's entry too. Mid-
+    session runs used to alert on half a day's volume, a signal no backtest
+    can reproduce. Costs same-day timing, decided Oct 20 2026.
     """
-    if now.weekday() >= 5:
-        return None
-    if market_open(now):
+    if now.weekday() < 5 and now.hour >= 16:
         return "alert"
-    if now.hour >= 16:
-        return "digest"
-    return None  # pre-open weekday: the day hasn't happened yet, stay quiet
+    return None  # weekend, pre-open, or market still trading
 
 
 def upside_gate(facts) -> tuple[bool, str]:
@@ -133,7 +123,7 @@ def main():
     mode = "alert" if "--force" in sys.argv else scan_window(now)
 
     if mode is None:
-        # weekend or pre-open: one note a day so "a message every day" still holds
+        # weekend or before the close: one note a day so "a message every day" still holds
         note = closing_note(now)
         if note and state["last_alert"] != today:
             notify.send(note)
@@ -144,10 +134,10 @@ def main():
             log.info("Outside scan hours, skipping (use --force to override).")
         return
 
-    if mode == "digest" and state["last_alert"] == today:
-        # something already went out today; a post-close scan has nothing to add,
-        # and skipping it here is what keeps this to one extra scan per day
-        log.info("Already messaged today, skipping post-close digest scan.")
+    if state["last_alert"] == today and "--force" not in sys.argv:
+        # GitHub delivers several of the requested post-close runs; the first
+        # one does the day's work and the rest exit here
+        log.info("Already ran today's post-close scan, skipping.")
         return
 
     # ponytail: only today's sends matter for the resend rule — drop older entries
@@ -188,8 +178,7 @@ def main():
         log.info("%d qualified (score+confluence), %d new/stronger since last alert",
                  len(qualified), len(candidates))
 
-        # facts + judge only feed alerts, so a digest-mode run skips both
-        if candidates and mode == "alert":
+        if candidates:
             packs = facts.fetch([s["ticker"] for s in candidates])
             for s in candidates:
                 s["facts"] = packs.get(s["ticker"], {})
@@ -218,7 +207,7 @@ def main():
                 log.info("vol gate: skipped, only %d candidate(s) survived upside gate",
                           len(candidates))
 
-        if candidates and mode == "alert":
+        if candidates:
             try:
                 picks = analyzer.judge(candidates)
             except analyzer.JudgeFormatError:
@@ -251,9 +240,11 @@ def main():
                          len(candidates))
                 log.info("Claude reply: %s", analyzer.LAST_REPLY[:500])
 
-    # digest: the 3pm run if one lands, otherwise the first run after the close.
-    # Two triggers, not one, because the cron can't be relied on to hit either.
-    if state["last_alert"] != today and (mode == "digest" or now.hour == 15):
+    # digest: same run, right after any alert — the top signals when nothing was
+    # alerted, plus the scorecard and paper account every day
+    alerted = state["last_alert"] == today
+    msg = ""
+    if not alerted:
         if ranked:
             def _names(s):
                 return ", ".join(n for n, on in [
@@ -266,21 +257,19 @@ def main():
                    "Top signals seen:\n" + body)
         else:
             msg = "Daily digest — quiet day, no tickers tripped any screens."
-        # Scorecard on post-close runs only: a 3pm digest would grade past picks
-        # against a price that is still moving.
-        if mode == "digest":
-            try:
-                card = outcomes.report()
-                if card:
-                    msg += "\n\n" + card
-            except Exception:
-                log.exception("outcomes report failed, sending digest without it")
-            paper = broker.portfolio_line()
-            if paper:
-                msg += "\n\n" + paper
-        notify.send(msg)
-        state["last_alert"] = today
+    try:
+        card = outcomes.report()
+        if card:
+            msg += "\n\n" + card
+    except Exception:
+        log.exception("outcomes report failed, sending digest without it")
+    paper = broker.portfolio_line()
+    if paper:
+        msg += "\n\n" + paper
+    if msg.strip():
+        notify.send(msg.strip())
         log.info("Sent daily digest.")
+    state["last_alert"] = today
 
     STATE.write_text(json.dumps(state))
 
@@ -297,12 +286,10 @@ def _selfcheck():
     wed_close = datetime(2026, 7, 22, 16, 5, tzinfo=ny)
     sat = datetime(2026, 7, 18, 12, 0, tzinfo=ny)
 
-    assert market_open(wed_open)
-    assert not market_open(wed_pre) and not market_open(wed_close) and not market_open(sat)
-    assert scan_window(wed_open) == "alert"
-    # the regression: a weekday after the close scans and reports the real day.
-    # It must never claim the market didn't trade, and must never alert.
-    assert scan_window(wed_close) == "digest"
+    # alerts fire only on final bars, after the close — the same day-t-close
+    # signal the backtest measures. A mid-session run sees half a day's volume.
+    assert scan_window(wed_open) is None
+    assert scan_window(wed_close) == "alert"
     assert closing_note(wed_close) is None
     # weekend and pre-open never scan; only the weekend gets a note
     assert scan_window(sat) is None and scan_window(wed_pre) is None

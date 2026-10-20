@@ -2,9 +2,15 @@ name: stock-alert
 
 on:
   schedule:
-    # Every 30 min, 13:05-21:35 UTC Mon-Fri — covers 9am-4pm ET in both EST and EDT.
-    # main.py re-checks Eastern market hours and exits quietly outside them.
-    - cron: "5,35 13-21 * * 1-5"
+    # After the close only: alerts use final daily bars (see scan_window in main.py).
+    # 20:15-02:45 UTC is 4:15-10:45pm EDT / 3:15-9:45pm EST; main.py re-checks
+    # Eastern time, so the EST 3:15pm run just exits. GitHub drops most of these
+    # requests — asking for 14 is what gets one delivered. The first to land does
+    # the day's work; the rest exit early.
+    - cron: "15,45 20-23 * * 1-5"
+    - cron: "15,45 0-2 * * 2-6"
+    # weekend "market closed" note
+    - cron: "0 16 * * 0,6"
   workflow_dispatch:
     inputs:
       test:
@@ -12,7 +18,7 @@ on:
         type: boolean
         default: false
       force:
-        description: "Full real scan now, ignoring market hours (may send a real alert)"
+        description: "Full real scan now, ignoring the after-close window (may send a real alert)"
         type: boolean
         default: false
       smoke:
