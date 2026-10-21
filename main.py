@@ -45,7 +45,10 @@ def load_state():
         state = {}
     if not isinstance(state, dict):
         state = {}
-    return {"sent": state.get("sent") or {}, "last_alert": state.get("last_alert")}
+    return {"sent": state.get("sent") or {}, "last_alert": state.get("last_alert"),
+            # date of the last real post-close scan; a daytime --force run never
+            # sets it, so it can't cancel that evening's scan on final bars
+            "scanned": state.get("scanned")}
 
 
 def scan_window(now):
@@ -113,6 +116,21 @@ def closing_note(now):
     return None
 
 
+def market_closed(last_bar, today):
+    """A weekday the market never opened (a holiday): SPY's newest bar is older
+    than today. Unknown (None) is not closed — a flaky lookup must not block alerts."""
+    return last_bar is not None and last_bar < today
+
+
+def spy_last_bar():
+    try:
+        import yfinance as yf
+        return yf.Ticker("SPY").history(period="5d").index[-1].date()
+    except Exception:
+        log.warning("could not read SPY's last bar, assuming the market traded")
+        return None
+
+
 def main():
     now = datetime.now(ZoneInfo("America/New_York"))
     import screener, sentiment, earnings, facts, analyzer, notify, tracker, outcomes, broker
@@ -134,16 +152,30 @@ def main():
             log.info("Outside scan hours, skipping (use --force to override).")
         return
 
-    if state["last_alert"] == today and "--force" not in sys.argv:
+    forced = "--force" in sys.argv
+    real_scan = scan_window(now) == "alert"  # final bars, not a daytime --force
+    if state["scanned"] == today and not forced:
         # GitHub delivers several of the requested post-close runs; the first
         # one does the day's work and the rest exit here
         log.info("Already ran today's post-close scan, skipping.")
+        return
+
+    if not forced and market_closed(spy_last_bar(), now.date()):
+        # holiday: the newest bars are the last session's, already scanned and
+        # alerted — re-scanning them would re-alert and re-order the same picks
+        if state["last_alert"] != today:
+            notify.send("Market closed today (holiday) — no scan. Back at it next trading day.")
+            state["last_alert"] = today
+        state["scanned"] = today
+        STATE.write_text(json.dumps(state))
+        log.info("Market holiday, no scan.")
         return
 
     # ponytail: only today's sends matter for the resend rule — drop older entries
     state["sent"] = {t: v for t, v in state["sent"].items() if v["date"] == today}
 
     ranked = []
+    alerted = False
     signals = screener.scan()
     log.info("screener: %d tickers with signals", len(signals))
 
@@ -233,6 +265,12 @@ def main():
                 for p in picks:
                     state["sent"][p["ticker"]] = {"date": today, "score": scores[p["ticker"]]}
                 state["last_alert"] = today
+                alerted = True
+                if real_scan:
+                    state["scanned"] = today
+                # saved now, not at the end: if the digest below crashes, the
+                # next run must not re-send these picks or re-place their orders
+                STATE.write_text(json.dumps(state))
                 log.info("Claude judged %d of %d actionable — sent to Telegram.",
                          len(picks), len(candidates))
             else:
@@ -242,7 +280,6 @@ def main():
 
     # digest: same run, right after any alert — the top signals when nothing was
     # alerted, plus the scorecard and paper account every day
-    alerted = state["last_alert"] == today
     msg = ""
     if not alerted:
         if ranked:
@@ -257,19 +294,27 @@ def main():
                    "Top signals seen:\n" + body)
         else:
             msg = "Daily digest — quiet day, no tickers tripped any screens."
-    try:
-        for card in (outcomes.report(), outcomes.judge_report()):
+    # one try each: report() has already marked its rows graded by the time
+    # judge_report() runs, so a shared try would lose that scorecard for good
+    for card_fn in (outcomes.report, outcomes.judge_report):
+        try:
+            card = card_fn()
             if card:
                 msg += "\n\n" + card
-    except Exception:
-        log.exception("outcomes report failed, sending digest without it")
+        except Exception:
+            log.exception("%s failed, sending digest without it", card_fn.__name__)
     paper = broker.portfolio_line()
     if paper:
         msg += "\n\n" + paper
     if msg.strip():
-        notify.send(msg.strip())
-        log.info("Sent daily digest.")
+        try:
+            notify.send(msg.strip())
+            log.info("Sent daily digest.")
+        except Exception:
+            log.exception("digest send failed — alerts and state are unaffected")
     state["last_alert"] = today
+    if real_scan:
+        state["scanned"] = today
 
     STATE.write_text(json.dumps(state))
 
@@ -295,6 +340,12 @@ def _selfcheck():
     assert scan_window(sat) is None and scan_window(wed_pre) is None
     assert "Market closed" in closing_note(sat)
     assert closing_note(wed_pre) is None
+    # a weekday the market never opened (Thanksgiving): SPY's last bar is older
+    # than today, so the run must not re-scan and re-alert yesterday's bars
+    from datetime import date
+    assert market_closed(date(2026, 11, 25), date(2026, 11, 26))
+    assert not market_closed(date(2026, 11, 27), date(2026, 11, 27))
+    assert not market_closed(None, date(2026, 11, 27))  # unknown: don't block alerts
     print("time/message self-check ok")
 
     # a state file missing "sent" must not KeyError the whole run
@@ -305,6 +356,7 @@ def _selfcheck():
             STATE = pathlib.Path(f.name)
         s = load_state()
         assert s["sent"] == {} and s["last_alert"] == "2026-07-22", s
+        assert s["scanned"] is None, s
     finally:
         STATE = orig
     print("state self-check ok")

@@ -58,6 +58,8 @@ def _fake_api(state):
                     "last_equity": "99000"}
         if method == "GET" and path == "/v2/positions":
             return state["positions"]
+        if method == "GET" and path == "/v2/orders?status=open":
+            return state.get("open", [])
         if method == "POST" and path == "/v2/orders":
             state["orders"].append(body)
             return {"id": "fake", "symbol": body["symbol"]}
@@ -88,6 +90,17 @@ def test_buy_sends_a_market_order_with_a_stop_attached():
 
 def test_buy_skips_a_ticker_already_held():
     state = {"positions": [{"symbol": "NVDA", "qty": "10"}], "orders": []}
+    picks = _picks(("NVDA", "buy it\nInvalid below: $158.40"))
+    cands = [{"ticker": "NVDA", "facts": {"price": 200.0}}]
+
+    assert broker.buy(picks, cands, api=_fake_api(state), slice_pct=10) == []
+    assert state["orders"] == []
+
+
+def test_buy_skips_a_ticker_with_an_unfilled_order():
+    # an after-close order sits "accepted" until the open — not yet a position.
+    # A re-run that evening must not place a second one.
+    state = {"positions": [], "orders": [], "open": [{"symbol": "NVDA"}]}
     picks = _picks(("NVDA", "buy it\nInvalid below: $158.40"))
     cands = [{"ticker": "NVDA", "facts": {"price": 200.0}}]
 

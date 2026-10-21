@@ -27,10 +27,10 @@ Per trade, mean return minus SPY, next-open entry, stop at `stop_ref`, 5 bps/sid
 
 | | 5d tune / test | 20d tune / test | vs random 20d tune / test |
 |---|---|---|---|
-| random S&P member-day | −0.07 / −0.22 | −0.13 / −0.41 | 0 / 0 |
-| qualified (live gates) | −0.30 / −0.39 | −0.33 / −0.55 | −0.20 / −0.14 |
-| breakout × volume | −0.34 / −0.31 | −0.43 / −0.38 | −0.30 / +0.03 |
-| oversold | −0.12 / −0.22 | −0.01 / −0.43 | +0.13 / −0.02 |
+| random S&P member-day | −0.07 / −0.22 | +0.12 / −0.51 | 0 / 0 |
+| qualified (live gates) | −0.30 / −0.37 | −0.32 / −0.53 | −0.44 / −0.02 |
+| breakout × volume | −0.33 / −0.29 | −0.42 / −0.32 | −0.54 / +0.18 |
+| oversold | −0.14 / −0.22 | +0.02 / −0.45 | −0.10 / +0.05 |
 
 - Even random stocks trail SPY: an equal mix of S&P names lagged the cap-weighted
   index since 2015 (megacap years). That is most of every "HARMFUL" verdict.
@@ -38,7 +38,7 @@ Per trade, mean return minus SPY, next-open entry, stop at `stop_ref`, 5 bps/sid
   The research's expected edges (breakout×volume 20d, oversold 5d) did not appear.
 - The stop costs nothing: a one-off check without it gave −0.29% vs −0.24% (random,
   20d) and −0.47% vs −0.44% (live gates, 20d). Not in `trials.jsonl` (ad-hoc script).
-- Optimistic caveat: 28% of 2015 member-days have no Yahoo data (delisted). Fixing
+- Optimistic caveat: 26.5% of 2015 member-days have no Yahoo data (delisted). Fixing
   that would make results worse, not better.
 
 **Decisions applied by the research's own rule** ("change a weight only if it passes
@@ -56,7 +56,12 @@ the bot as a paper experiment only and stop reading alerts as buy signals.
 
 ## Verified state
 
-- `pytest -q` → 58 passed. `main.py --selfcheck`, `screener.py` ok.
+- `pytest -q` → 60 passed. `main.py --selfcheck`, `screener.py` ok.
+- A checker agent reviewed everything; its fixes shipped in the commit after `8df4128`:
+  no double alert when the digest fails, New York dates (not UTC) everywhere, a
+  daytime `--force` no longer cancels the evening scan, one holiday note instead of
+  an empty scan, broker skips tickers with an unfilled order, dedupe overlap fixed.
+  `trials.jsonl` has 3 runs; all give the same answer.
 - No live run has used the new code yet; the first post-close run is tonight.
 - `data/` (bars 72 MB, members CSV) is local only and gitignored.
 

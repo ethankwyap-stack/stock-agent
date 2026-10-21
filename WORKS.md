@@ -13,7 +13,7 @@ silently read as "no picks today".
 
 **Prove it:**
 ```bash
-.venv/bin/python -m pytest test_analyzer.py -q     # 21 passed
+.venv/bin/python -m pytest test_analyzer.py -q     # 23 passed
 .venv/bin/python analyzer.py                       # rank + judge-parse self-check ok
 ```
 Covers: good replies parse; `{"picks": []}` is a legitimate rejection, not an
@@ -46,11 +46,11 @@ broker failure never suppresses the Telegram alert. It cannot trade real money:
 
 **Prove it:**
 ```bash
-.venv/bin/python -m pytest test_broker.py -q    # 15 passed
+.venv/bin/python -m pytest test_broker.py -q    # 17 passed
 ```
 Covers: stop level parsed (commas, no cents, absent); share count from the equity
 slice, capped by cash, zero on an unaffordable or junk price; the order body
-(market + OTO + stop_price); held tickers skipped; a missing stop degrades to a
+(market + OTO + stop_price); held tickers and tickers with an unfilled open order skipped; a missing stop degrades to a
 plain order rather than no trade; a dead API and missing keys both return `[]`.
 
 **Live check:** Actions → stock-alert → Run workflow → **force**, then look at
@@ -69,14 +69,19 @@ After 100 graded 20-day days it states whether to drop the judge.
 
 **Prove it:**
 ```bash
-.venv/bin/python -m pytest test_outcomes.py -q    # 10 passed
+.venv/bin/python -m pytest test_outcomes.py -q    # 11 passed
 ```
+All dates are New York market dates, never UTC — an evening run at 00:30 UTC
+still logs the trading day it scanned.
 
 ## Alerts fire only after the close
 
 **Promise:** a weekday run from 4pm ET scans final bars, judges, alerts, then
 sends the digest + scorecard. Runs before the close and on weekends never scan;
-later runs the same day exit early.
+later runs the same day exit early. On a market holiday (SPY has no bar for
+today) it sends one short note and does not scan. A daytime `--force` does not
+stop the evening's real scan. If the digest fails after an alert, the alert is
+not sent again.
 
 **Prove it:**
 ```bash

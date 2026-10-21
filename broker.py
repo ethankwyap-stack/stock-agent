@@ -104,6 +104,9 @@ def buy(picks, candidates, api=None, slice_pct=SLICE_PCT):
         equity = float(account["equity"])
         cash = float(account["cash"])
         held = {p["symbol"] for p in api("GET", "/v2/positions")}
+        # An after-close order sits unfilled until the open, so it is not a
+        # position yet; without this a second run that evening doubles it.
+        held |= {o["symbol"] for o in api("GET", "/v2/orders?status=open")}
     except Exception:
         log.exception("broker: could not read the paper account, no orders sent")
         return []
@@ -112,7 +115,7 @@ def buy(picks, candidates, api=None, slice_pct=SLICE_PCT):
     for p in picks:
         ticker = p["ticker"]
         if ticker in held:
-            log.info("broker: already holding %s, no new order", ticker)
+            log.info("broker: already holding or ordered %s, no new order", ticker)
             continue
         shares = qty(equity, cash, prices.get(ticker), slice_pct)
         if shares < 1:

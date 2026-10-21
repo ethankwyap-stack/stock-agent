@@ -11,6 +11,7 @@ import datetime
 import json
 import logging
 import pathlib
+from zoneinfo import ZoneInfo
 
 import yfinance as yf
 
@@ -59,6 +60,13 @@ def _save(path, rows):
             f.write(json.dumps(row) + "\n")
 
 
+def market_date(now=None):
+    """Today in New York. Actions runs in UTC, where every run after 8pm EDT
+    is already tomorrow — which dated picks a day late and shifted every grade."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return now.astimezone(ZoneInfo("America/New_York")).date()
+
+
 def last_price(ticker):
     try:
         return float(yf.Ticker(ticker).fast_info["last_price"])
@@ -86,7 +94,7 @@ def record(picks, candidates, path=LOG):
     """
     try:
         by_ticker = {s["ticker"]: s for s in candidates}
-        today = datetime.date.today().isoformat()
+        today = market_date().isoformat()
         spy = last_price("SPY")
         with open(path, "a") as f:
             for p in picks:
@@ -104,7 +112,7 @@ def log_judgment(candidates, picks, spy, path=JUDGE_LOG, today=None):
     the model and SPY. Never raises: this is bookkeeping, never worth an alert."""
     try:
         import analyzer
-        row = {"date": (today or datetime.date.today()).isoformat(),
+        row = {"date": (today or market_date()).isoformat(),
                "model": analyzer.MODEL, "spy": spy,
                "picks": [p["ticker"] for p in picks],
                "candidates": [{"ticker": s["ticker"], "score": s.get("score"),
@@ -144,7 +152,7 @@ def report(path=LOG, today=None, history_fn=None):
     rows = _load(path)
     if not rows:
         return ""
-    today = today or datetime.date.today()
+    today = today or market_date()
     history_fn = history_fn or _history
     cache = {}
 
@@ -195,7 +203,7 @@ def judge_report(path=JUDGE_LOG, today=None, history_fn=None, min_days=100):
     """
     import analyzer
     rows = _load(path)
-    today = today or datetime.date.today()
+    today = today or market_date()
     history_fn = history_fn or _history
     cache, changed = {}, False
 

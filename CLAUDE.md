@@ -54,7 +54,7 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
 
 ## Gotchas
 - **The cron is a request, not a schedule.** GitHub delivers roughly a third of
-  requested runs, up to 22 min late. Never write logic requiring a run to land in
+  requested runs, often hours late. Never write logic requiring a run to land in
   a specific clock hour. That is why `run.yml` asks for 14 post-close runs a day
   to get one. Estimate minutes from `gh run list`.
 - **Alerts fire only after the close (since Oct 20 2026).** `scan_window(now)`
@@ -65,6 +65,17 @@ Or test on GitHub with the stored key — Actions → stock-alert → Run workfl
   fill at the next open — the backtest's entry. Mid-session alerting used
   half-day volume, which no backtest can reproduce. Do not bring it back
   without re-running the backtest on a matching definition.
+  `state["scanned"]` (not `last_alert`) is what stops later runs, so a daytime
+  `--force` cannot cancel the evening scan. `last_alert` is written right after
+  the alert, before the digest, so a digest crash never re-sends picks. A
+  holiday is detected as "SPY's last bar is before today" and gets one note.
+- **Every date is a New York date — use `outcomes.market_date()`, never
+  `datetime.date.today()`.** Actions runs in UTC, and the evening runs land
+  after midnight UTC, so `today()` there is already tomorrow. That mislabels
+  picks, judge-log days and the sheet row by one day.
+- **`broker.buy()` must check open orders, not just positions.** An after-close
+  order sits unfilled until the open, so it is not a position yet; a second run
+  that evening would double it.
 - **The backtest must call the live code.** `backtest.py` runs `screener.signals()`
   on a 63-bar window (the live `period="3mo"`). Never copy the signal math into
   the backtest "for speed" — 8 worker processes already do it in minutes, and a

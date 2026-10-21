@@ -1,5 +1,4 @@
 """Append every sent pick to the tracking Google Sheet via its Apps Script webhook."""
-import datetime
 import logging
 import os
 
@@ -25,7 +24,7 @@ def log_picks(picks, candidates):
             spy = round(yf.Ticker("SPY").fast_info["last_price"], 2)
         except Exception:
             spy = ""
-        today = datetime.date.today().isoformat()
+        today = outcomes.market_date().isoformat()
         rows = []
         for p in picks:
             s = by_ticker.get(p["ticker"], {})

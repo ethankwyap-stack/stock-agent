@@ -45,7 +45,9 @@ def main():
     if not MEMBERS.exists():
         MEMBERS.write_bytes(requests.get(MEMBERS_URL, timeout=60).content)
     bars = pickle.loads(BARS.read_bytes()) if BARS.exists() else {}
-    todo = [t for t in tickers_since(MEMBERS) if t not in bars]
+    # None entries are retried too: a rate limit that starts mid-chunk looks
+    # exactly like a delisting, and a delisted name just comes back None again
+    todo = [t for t in tickers_since(MEMBERS) if bars.get(t) is None]
     print(f"{len(bars)} cached, {len(todo)} to fetch")
     for k in range(0, len(todo), CHUNK):
         chunk = todo[k:k + CHUNK]
@@ -61,12 +63,12 @@ def main():
             # stay missing, and are counted per year by backtest.py
             bars[t] = df if df is not None and len(df) else None
             got += bars[t] is not None
-        if got == 0 and len(chunk) > 20:
-            # a whole chunk empty is a 429 block, not 100 delistings — don't
-            # record them as missing, stop and let a later rerun pick them up
+        if got < len(chunk) and yf.download("SPY", period="5d", progress=False).empty:
+            # SPY always exists, so SPY failing too means a 429 block, not
+            # delistings — keep nothing from this chunk, rerun later
             for t in chunk:
                 bars.pop(t, None)
-            print("whole chunk empty — probably rate-limited; rerun later")
+            print("Yahoo is rate-limiting — rerun later, it resumes from here")
             break
         BARS.write_bytes(pickle.dumps(bars))
         print(f"{k + len(chunk)}/{len(todo)}: {got} of {len(chunk)} had data")

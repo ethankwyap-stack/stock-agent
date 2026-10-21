@@ -128,3 +128,12 @@ def test_judge_decision_rule_fires_after_enough_days(tmp_path):
     line = outcomes.judge_report(log, today=TODAY, history_fn=lambda t, d: hist[t],
                                  min_days=3)
     assert "DROP THE JUDGE" in line, line
+
+
+def test_market_date_is_new_york_not_utc():
+    # Actions runs in UTC; a 8:30pm EDT run is already tomorrow there
+    utc = datetime.timezone.utc
+    assert outcomes.market_date(datetime.datetime(2026, 10, 21, 0, 30, tzinfo=utc)) \
+        == datetime.date(2026, 10, 20)
+    assert outcomes.market_date(datetime.datetime(2026, 12, 2, 2, 45, tzinfo=utc)) \
+        == datetime.date(2026, 12, 1)

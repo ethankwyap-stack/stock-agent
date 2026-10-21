@@ -55,6 +55,10 @@ def test_trade_without_enough_future_bars_is_skipped():
 def test_dedupe_keeps_first_signal_per_holding_period():
     ev = pd.DataFrame({"ticker": ["A", "A", "A", "B"], "pos": [0, 2, 6, 1]})
     assert backtest.dedupe(ev, 5)["pos"].tolist() == [0, 6, 1]
+    # a signal at 0 exits on bar 6's close; one at 5 would enter at bar 6's open
+    # while the first is still held — that is overlap, so it is dropped
+    ev = pd.DataFrame({"ticker": ["A", "A"], "pos": [0, 5]})
+    assert backtest.dedupe(ev, 5)["pos"].tolist() == [0]
 
 
 def test_block_t_counts_one_crash_day_as_one_bet():

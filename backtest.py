@@ -146,7 +146,7 @@ def dedupe(ev, h):
     same name are one bet, not several."""
     keep, last = [], {}
     for idx, t, p in sorted(zip(ev.index, ev["ticker"], ev["pos"]), key=lambda r: (r[1], r[2])):
-        if t not in last or p >= last[t] + h:
+        if t not in last or p > last[t] + h:  # last exits on bar last+1+h's close
             keep.append(idx)
             last[t] = p
     return ev[ev.index.isin(keep)]
@@ -154,7 +154,10 @@ def dedupe(ev, h):
 
 def block_t(vals, blocks):
     """t-stat over per-block means: every signal entering in the same h-day
-    block counts once, so a crash day with 40 signals is one observation."""
+    block counts once, so a crash day with 40 signals is one observation.
+    ponytail: neighbouring blocks still overlap (a trade entering late in block
+    k runs into k+1), so t reads somewhat high — it can only overstate an edge,
+    never hide one. Newey-West if a cell ever lands near the bar."""
     m = pd.Series(list(vals)).groupby(list(blocks)).mean()
     if len(m) < 2 or m.std() == 0:
         return float("nan"), len(m)
@@ -204,7 +207,9 @@ def verdict(tune, test, stress_tune, stress_test, up, down):
 
 def report(events, data):
     spy = data["SPY"]["Close"]
-    uptrend = (spy > spy.rolling(200).mean()).to_dict()
+    ma = spy.rolling(200).mean()
+    # NaN until 200 bars exist (Mar 2015): neither up nor down, not "down"
+    uptrend = (spy > ma).where(ma.notna()).to_dict()
     events = events[events["date"] >= START].reset_index(drop=True)
     lines, results = [], []
     extra = 2 * (COST_STRESS - COST)
@@ -221,8 +226,8 @@ def report(events, data):
             # purge: a tune trade still open on the split date leaks test data
             tune = tr[tr["exit"] < SPLIT]
             test = tr[tr["entry"] >= SPLIT]
-            up = tune[tune["date"].map(uptrend).fillna(False).astype(bool)]
-            down = tune[~tune["date"].map(uptrend).fillna(False).astype(bool)]
+            trend = tune["date"].map(uptrend)
+            up, down = tune[trend == 1.0], tune[trend == 0.0]
             s = {"tune": stats(tune), "test": stats(test),
                  "tune20": stats(tune, extra), "test20": stats(test, extra),
                  "up": stats(up), "down": stats(down)}
