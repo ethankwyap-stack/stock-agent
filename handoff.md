@@ -10,7 +10,7 @@ answer: the price screens have no edge.** Over 2015–2026, no signal, and not t
 live gate stack, beats a random S&P 500 stock held the same way. The live gates
 pick slightly *worse* than random. See "Findings".
 
-One decision is open for Ethan — what to do about that. Nothing else is pending.
+Ethan chose to keep running and let the judge log decide. Nothing is pending.
 
 ## What shipped today
 
@@ -46,13 +46,15 @@ the bar, otherwise leave it"): no weights changed. Open question 3 (move breakou
 +2 to breakout×volume) → **no**, breakout×volume fails too. Open question 2 (judge
 replay on Feb–Sep 2026) → **no**, the shadow log measures the judge for free.
 
-## The one open decision — ASK ETHAN
+## The decision
 
 The screens alone are a coin flip that trails SPY. Whatever edge exists must come
 from the non-price layers (analyst-upside gate, sentiment, the Claude judge), which
 only the live `judge_log.jsonl` can measure (~100 judged days, months).
-Options he was given: keep running as-is and let the judge log decide, or treat
-the bot as a paper experiment only and stop reading alerts as buy signals.
+**Decided 2026-10-21: keep running as-is and let the judge log decide.** No code
+change. The digest prints the drop-the-judge verdict by itself after 100 graded
+20-day days (around March–April 2027). Act on it then: if it says drop, alert on
+`rank()`'s top score instead of the judge.
 
 ## Verified state
 
