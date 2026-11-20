@@ -1,123 +1,106 @@
-# Stock Alert Agent
+# Stock Agent
 
-Scanner that screens S&P 500 stocks for unusual volume, 20-day breakouts,
-and RSI extremes, cross-references Yahoo sentiment and upcoming earnings, then has
-Claude *judge* which candidates (0–5) a cautious trader would actually act on today.
-Only the ones that clear that bar reach you on Telegram — most runs send nothing.
+**An S&P 500 scanner that sends me a Telegram alert only when a stock passes five gates, the last one an AI judge that must argue the bear case first. Then I backtested its price signals on 12 years of data to see if they really work. They didn't beat the market.**
 
-Runs free on GitHub Actions. No servers.
+![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?logo=python&logoColor=white)
+![Runs on](https://img.shields.io/badge/runs%20on-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-60-brightgreen)
+![Hosting](https://img.shields.io/badge/hosting-%240-success)
+
+Runs once each weekday after the market closes, on GitHub Actions. No server. Most days it sends nothing, and that is on purpose.
+
+## Why I built it
+
+I wanted to learn how real screening works: which signals mean something, and how to keep an AI from cheering on every trade. So I built the whole pipeline, then tested it against history instead of trusting it.
+
+## What I found (the honest part)
+
+I wrote [`backtest.py`](backtest.py), an event study: for every day a price signal fired since 2015, what did the stock do over the next 5 and 20 trading days, compared with the S&P 500 (SPY)?
+
+- **None of the price-only screens showed a reliable edge over the market.** Not volume spikes, breakouts, oversold names, or the score-and-signal-count rules the live agent uses.
+- **Some were worse than random picks.** Breakouts on high volume were marked *HARMFUL* by my own pass/fail bar.
+- **How I tried to keep it fair:** only companies that were in the S&P 500 on that date, 2015-2021 for tuning and 2022-2026 held out as a test period, trading costs counted, and results checked in both up and down markets.
+- **Limits I know about:** older years are missing data for some delisted or renamed stocks (26.5% of 2015 member-days), which makes results look better than they were, not worse. The news, analyst-target and AI-judge layers can't be backtested for free, so they are not in these numbers.
+
+Full tables: [`backtest-results.md`](backtest-results.md). Plan and traps: [`backtest-research.md`](backtest-research.md).
+
+What I took from it: a pipeline that *looks* smart is not evidence. So the agent now logs each judgment the AI makes, including "pass on all of them", to build the data needed to grade the AI judge later.
 
 ## How it works
 
 ```
-screener.py  -> technical signals + 30d volatility (yfinance, S&P 500 from Wikipedia)
-sentiment.py -> Yahoo news headline sentiment, top 20 by score (free, no key)
-earnings.py  -> earnings within 7 days + avg post-earnings move, top 30 by score
-facts.py     -> finalist fact pack: analyst target, 52wk position, P/E, beta
-analyzer.py  -> composite score + Claude (claude-sonnet-5) as skeptical judge
-notify.py    -> Telegram bot message
-outcomes.py  -> grades past picks at 5/20 trading days vs SPY; logs every judge call
-main.py      -> orchestrates; gates candidates, remembers what it already sent
+screener.py   S&P 500 → volume spikes, 20-day breakouts, RSI, 30-day volatility   (yfinance)
+sentiment.py  Yahoo headline tone for the top-scoring names                        (free, no key)
+earnings.py   earnings within 7 days + the stock's usual post-earnings move
+facts.py      fact pack for finalists: analyst target, 52-week range, P/E, beta
+analyzer.py   score, then Claude as a skeptical judge → usually 0 or 1 pick
+notify.py     Telegram alert           broker.py   optional: mirrors the pick into a PAPER account
+outcomes.py   grades every past pick at 5 and 20 trading days vs SPY
 ```
 
-Gates a ticker must clear, in order:
+A stock must clear every gate, in order:
 
-1. Score >= 2.5 AND at least 2 independent signal families
-   (volume / breakout / RSI / earnings).
-2. Not already alerted today, unless its score jumped by 2+.
-3. Believable analyst upside: either 10–40% above the current price, or — for a
-   momentum name sitting at 80%+ of its 52-week range — merely not below it.
-   Over 40% is dropped as a target nobody has cut yet; no target at all is
-   dropped too.
-4. 30-day volatility no more than 4× the upside, with a 5% floor on the upside
-   so momentum names aren't killed by their own deliberately small target.
-5. Claude, prompted as a skeptic whose default is DO NOT BUY, builds the bear
-   case from the fact pack and includes the ticker only if the upside clearly
-   outweighs it. Zero picks is a normal outcome.
+1. **Score ≥ 2.5 from at least 2 different signal types** (volume, breakout, RSI, earnings). One loud signal is not enough.
+2. **Not already sent today**, unless its score jumped by 2+.
+3. **Believable analyst upside:** 10-55% above today's price. More than that usually means a stale target. A stock near its 52-week high only needs a target that isn't below the price.
+4. **Not too noisy:** when there are several finalists, drop any whose 30-day volatility is far bigger than its upside.
+5. **The AI judge.** Claude gets the numbers, must build the strongest bear case for each stock first, and passes only the best setup whose upside clearly beats it. "No picks" is a normal answer. Every alert ends with the price that would prove the setup wrong.
 
-Alerts are 3-4 lines per pick: the setup and upside, the top reasons NOT to
-buy, the verdict on why it's worth it anyway, and the invalidation level below
-which the setup is simply wrong. You get at least one message
-every day: if no alert fired by 3pm ET, a daily digest lists the day's top
-signals (or says it was a quiet day). If GitHub's cron skips the 3pm hour
-entirely — it often does, see below — the first run after the close scans again
-and sends that digest using the day's final data. Post-close runs only
-summarize; they never alert, since a BUY landing at 6pm is a different message
-from one at 11am. On weekends a single "market closed" note goes out around noon
-ET (alert memory lives in `state.json`, carried between runs by the Actions
-cache).
+Each alert is 3-4 lines: *setup and upside → top risks → why it's worth it anyway → "invalid below $X"*.
 
-## Setup
+## Tech
 
-Do these one at a time.
+Python · pandas · yfinance · Claude (through the Claude Code CLI) · Telegram Bot API · Alpaca paper-trading API · Google Apps Script (a sheet log) · GitHub Actions (schedule + Actions cache for state)
 
-### 1. Telegram bot
+Hosting is free. The AI calls run on my existing Claude subscription.
 
-1. In Telegram, message **@BotFather**, send `/newbot`, follow the prompts.
-   Copy the token it gives you — that's `TELEGRAM_TOKEN`.
-2. Message your new bot anything (say "hi") so it can reply to you.
-3. Open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser and
-   copy the `"chat":{"id": ...}` number — that's `TELEGRAM_CHAT_ID`.
-
-### 2. Claude plan token
-
-Run `claude setup-token` and copy the token. That's `CLAUDE_CODE_OAUTH_TOKEN`. Usage counts against your Claude plan, no per-token bill.
-(This is the only paid service — each run that finds signals costs about half a
-cent on claude-sonnet-5; quiet runs cost nothing. Measured total: under $1/mo.)
-
-### 3. GitHub
-
-1. Push this repo to GitHub.
-2. Repo → Settings → Secrets and variables → Actions → New repository secret.
-   Add all three: `CLAUDE_CODE_OAUTH_TOKEN`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`.
-   (Sentiment comes from Yahoo Finance's public comment/news APIs — no key needed.)
-3. The workflow (`.github/workflows/run.yml`) asks for a run every 30 minutes,
-   9am-4pm ET, Mon-Fri. GitHub treats scheduled runs as best-effort and in
-   practice delivers 4-7 a day, spaced 80-100 minutes apart — the code is
-   written to be correct at whatever cadence actually shows up.
-   Test it now: repo → Actions → stock-alert → "Run workflow". Two checkboxes:
-   **test** sends a fake pick through Telegram + the sheet without scanning;
-   **force** does a full real scan ignoring market hours, which is how you
-   verify the Claude call after changing the model (it may send a real alert).
-
-## Run locally
+## Run it
 
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
+.venv/bin/python -m pytest -q          # 60 tests, no keys needed
+.venv/bin/python main.py --selfcheck   # market hours, digest, state
+```
+
+A real scan also needs a logged-in [Claude Code](https://claude.com/claude-code) CLI and a Telegram bot:
+
+```bash
 export TELEGRAM_TOKEN=... TELEGRAM_CHAT_ID=...
-python main.py --force   # --force skips the market-hours check
+.venv/bin/python main.py --force       # a real scan, ignores market hours
 ```
 
-Self-checks (no API keys needed):
+<details>
+<summary><b>Full setup on GitHub Actions</b> (Telegram bot, Claude token, secrets)</summary>
 
-```bash
-python screener.py       # RSI math
-python analyzer.py       # scoring/ranking + Claude reply parsing
-python main.py --selfcheck   # market hours, end-of-day message, state loading
-```
+1. **Telegram bot.** Message **@BotFather**, send `/newbot`, copy the token (`TELEGRAM_TOKEN`). Send your bot any message, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy the chat id (`TELEGRAM_CHAT_ID`).
+2. **Claude.** Run `claude setup-token` and copy the token (`CLAUDE_CODE_OAUTH_TOKEN`).
+3. **GitHub.** Settings → Secrets and variables → Actions: add all three. The workflow is [`.github/workflows/run.yml`](.github/workflows/run.yml). Actions → *Run workflow* has three boxes: **test** sends a fake pick without scanning, **force** runs a real scan outside the normal window, **smoke** makes one real Claude judge call on fake candidates, with no Telegram message.
 
-## Tuning
+</details>
 
-- `MIN_SCORE` in `main.py` (default 2.5) — raise it if you get too many alerts.
-- `MIN_FAMILIES` in `main.py` (default 2) — signal families required before
-  Claude even sees a ticker; set to 1 to loosen, 3 to only hear about monsters.
-- `RESEND_JUMP` in `main.py` (default 2.0) — same-day re-alerts need this much
-  score improvement.
-- `MIN_UPSIDE_PCT` / `MAX_UPSIDE_PCT` / `MOMENTUM_RANGE_PCT` in `main.py`
-  (10.0 / 40.0 / 80.0) — the upside gate. Analyst targets skew optimistic and
-  lag price, so the band is a sanity check, not a prediction: under the floor
-  there's nothing to weigh, over the ceiling the target is probably just stale.
-- `VOL_UPSIDE_MULT` in `main.py` (default 4.0) — how many times its upside a
-  stock's 30-day volatility may reach before it's dropped as too noisy to bother
-  judging.
-- `SENTIMENT_TICKERS` / `EARNINGS_TICKERS` in `main.py` (20 / 30) — how many of
-  the top-scoring tickers get the slow sentiment and earnings lookups. These are
-  ranked by technical score, never alphabetically. Raising them costs runtime
-  (earnings is the slowest stage by far); lowering them risks missing a mover
-  that was ranked low on technicals alone.
-- Claude's bar lives in `SYSTEM` in `analyzer.py` — edit the prompt to make the
-  judge stricter or looser.
-- Scoring weights live in `analyzer.rank()`: volume 2.0, breakout 2.0, RSI +1.0
-  when oversold and −1.0 when overbought (the alert is a BUY, so an overbought
-  breakout is a caution), headline tone ±1.5, earnings 0 — an upcoming report is
-  event risk for the judge to weigh, not a merit worth points.
+<details>
+<summary><b>Tuning knobs</b></summary>
+
+All in `main.py` unless noted:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `MIN_SCORE` | 2.5 | Raise for fewer alerts |
+| `MIN_FAMILIES` | 2 | Signal types needed before the judge sees a stock |
+| `RESEND_JUMP` | 2.0 | Score jump needed to re-alert the same day |
+| `MIN_UPSIDE_PCT` / `MAX_UPSIDE_PCT` | 10 / 55 | The analyst-upside band |
+| `VOL_UPSIDE_MULT` | 4.0 | Max volatility as a multiple of upside |
+| `SYSTEM` in `analyzer.py` | | The judge's prompt |
+| `analyzer.rank()` | | The scoring weights |
+
+</details>
+
+## How I built it
+
+I designed the gates, decided what to test and how, and read every result. I wrote the code with [Claude Code](https://claude.com/claude-code) as my pair programmer. The bug that taught me the most: six weeks with no alerts at all. It was not the market. It was my prompt: the judge's bar was so strict that it rejected everything. I rewrote it to pick the *best* setup whose upside beats its own bear case.
+
+*Not financial advice. This is a learning project, and its own backtest says the price signals don't beat the market.*
+
+---
+
+Built by **Ethan Yap** · UC Davis · [LinkedIn](https://www.linkedin.com/in/ethan-yap-827a45346/)
